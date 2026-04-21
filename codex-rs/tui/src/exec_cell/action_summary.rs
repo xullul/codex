@@ -116,12 +116,6 @@ fn summarize_raw(command: &str) -> Option<ActionSummary> {
         ActionKind::Git
     } else if lower.starts_with("sleep ") || lower == "sleep" || lower.starts_with("timeout ") {
         ActionKind::Wait
-    } else if is_powershell_analysis(&lower) {
-        return Some(ActionSummary {
-            kind: ActionKind::Run,
-            detail: Some("PowerShell analysis".to_string()),
-            suppress_success_output: false,
-        });
     } else if is_run_command(&lower) {
         ActionKind::Run
     } else {
@@ -133,18 +127,6 @@ fn summarize_raw(command: &str) -> Option<ActionSummary> {
         detail: Some(first_line.to_string()),
         suppress_success_output: false,
     })
-}
-
-fn is_powershell_analysis(command: &str) -> bool {
-    let has_readonly_powershell = command.contains("get-childitem")
-        || command.contains("get-content")
-        || command.contains("select-string");
-    has_readonly_powershell
-        && (command.contains("foreach-object")
-            || command.contains("sort-object")
-            || command.contains("where-object")
-            || command.contains("$files")
-            || command.contains("& {"))
 }
 
 fn is_test_command(command: &str) -> bool {

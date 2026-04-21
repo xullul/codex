@@ -1,6 +1,6 @@
 use crate::command_safety::is_dangerous_command::git_global_option_requires_prompt;
-use crate::command_safety::powershell_parser::PowershellParseOutcome;
-use crate::command_safety::powershell_parser::parse_with_powershell_ast;
+use crate::powershell_parser::PowershellParseOutcome;
+use crate::powershell_parser::parse_with_powershell_ast;
 use std::path::Path;
 
 /// On Windows, we conservatively allow only clearly read-only PowerShell invocations

@@ -328,6 +328,74 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
     );
 }
 
+#[tokio::test]
+async fn live_app_server_command_execution_prefers_semantic_search_action() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let script = "Get-Content .\\EticketContext.cs | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20";
+    let command = format!("powershell.exe -NoProfile -Command \"{script}\"");
+
+    chat.handle_server_notification(
+        ServerNotification::ItemStarted(ItemStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item: AppServerThreadItem::CommandExecution {
+                id: "cmd-ps-1".to_string(),
+                command: command.clone(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: None,
+                source: AppServerCommandExecutionSource::UserShell,
+                status: AppServerCommandExecutionStatus::InProgress,
+                command_actions: vec![AppServerCommandAction::Search {
+                    command: "Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20"
+                        .to_string(),
+                    query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
+                    path: Some("EticketContext.cs".to_string()),
+                }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+    chat.handle_server_notification(
+        ServerNotification::ItemCompleted(ItemCompletedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item: AppServerThreadItem::CommandExecution {
+                id: "cmd-ps-1".to_string(),
+                command,
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: None,
+                source: AppServerCommandExecutionSource::UserShell,
+                status: AppServerCommandExecutionStatus::Completed,
+                command_actions: vec![AppServerCommandAction::Search {
+                    command: "Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20"
+                        .to_string(),
+                    query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
+                    path: Some("EticketContext.cs".to_string()),
+                }],
+                aggregated_output: Some(String::new()),
+                exit_code: Some(0),
+                duration_ms: Some(5),
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(
+        cells.len(),
+        1,
+        "expected one completed command history cell"
+    );
+    let blob = lines_to_single_string(cells.first().expect("command cell"));
+    assert_chatwidget_snapshot!(
+        "live_app_server_command_execution_prefers_semantic_search_action",
+        blob
+    );
+}
+
 #[test]
 fn app_server_patch_changes_to_core_preserves_diffs() {
     let changes = app_server_patch_changes_to_core(vec![FileUpdateChange {

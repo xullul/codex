@@ -1310,6 +1310,23 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_content_with_select_string_pipe_is_search() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Get-Content EticketContext.cs | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context '0,20'"
+                    .to_string(),
+                query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
+                path: Some("EticketContext.cs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_child_item_is_list() {
         assert_parsed(
             &vec_str(&["pwsh", "-Command", "Get-ChildItem -Path codex-rs -Recurse"]),
@@ -1368,12 +1385,24 @@ mod tests {
             &vec_str(&[
                 "pwsh",
                 "-Command",
+                "Select-String -Path EticketContext.cs -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Path EticketContext.cs -Pattern 'Entity<Asset>|e => e.AssetTag' -Context '0,20'".to_string(),
+                query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
+                path: Some("EticketContext.cs".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
                 "Select-String -Path 'src/Controllers/**/*.cs','src/Controllers/*.cs' -Pattern 'DbContext|SaveChanges' | ForEach-Object { $_.Line }",
             ]),
             vec![ParsedCommand::Search {
                 cmd: "Select-String -Path 'src/Controllers/**/*.cs,src/Controllers/*.cs' -Pattern 'DbContext|SaveChanges'".to_string(),
                 query: Some("DbContext|SaveChanges".to_string()),
-                path: Some("*.cs".to_string()),
+                path: Some("*.cs +1 more".to_string()),
             }],
         );
     }
@@ -1419,8 +1448,8 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
         return commands;
     }
 
-    if let Some((_, script)) = extract_powershell_command(command) {
-        return parse_powershell_script(script);
+    if let Some((executable, script)) = extract_powershell_command(command) {
+        return parse_powershell_script(Some(executable), script);
     }
 
     let normalized = normalize_tokens(command);

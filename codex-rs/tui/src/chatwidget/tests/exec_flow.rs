@@ -959,6 +959,63 @@ async fn exec_history_extends_previous_when_consecutive() {
 }
 
 #[tokio::test]
+async fn powershell_exec_renders_semantic_search_and_keeps_raw_transcript() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let raw_cmd = "Get-Content .\\EticketContext.cs | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20";
+    let command = vec![
+        "powershell.exe".to_string(),
+        "-NoProfile".to_string(),
+        "-Command".to_string(),
+        raw_cmd.to_string(),
+    ];
+    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let begin = ExecCommandBeginEvent {
+        call_id: "powershell-search".to_string(),
+        process_id: None,
+        turn_id: "turn-1".to_string(),
+        command,
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        parsed_cmd,
+        source: ExecCommandSource::Agent,
+        interaction_input: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "powershell-search-begin".to_string(),
+        msg: EventMsg::ExecCommandBegin(begin.clone()),
+    });
+
+    let active = active_blob(&chat);
+    assert!(
+        !active.contains("powershell.exe"),
+        "expected semantic summary, got {active}"
+    );
+    assert_chatwidget_snapshot!("powershell_semantic_search_active", active);
+
+    let transcript = lines_to_single_string(
+        &chat
+            .active_cell
+            .as_ref()
+            .expect("active cell")
+            .transcript_lines(/*width*/ 80),
+    );
+    let normalized_transcript = transcript.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized_transcript.contains(
+            "Get-Content .\\EticketContext.cs | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20"
+        ),
+        "expected transcript to keep raw pipeline text, got {transcript}"
+    );
+    assert!(
+        normalized_transcript.contains("Entity<Asset>|e => e.AssetTag"),
+        "expected transcript to keep raw pattern, got {transcript}"
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    assert_chatwidget_snapshot!("powershell_semantic_search_completed", active_blob(&chat));
+}
+
+#[tokio::test]
 async fn user_shell_command_renders_output_not_exploring() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

@@ -1,0 +1,7 @@
+---
+source: tui/src/chatwidget/tests/app_server.rs
+expression: blob
+---
+• You ran Get-Content .\EticketContext.cs | Select-String -Pattern
+  │ 'Entity<Asset>|e => e.AssetTag' -Context 0,20
+  └ (no output)

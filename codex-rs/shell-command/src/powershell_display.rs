@@ -4,25 +4,41 @@ use codex_protocol::parse_command::ParsedCommand;
 
 use crate::parse_command::shlex_join;
 use crate::powershell::UTF8_OUTPUT_PREFIX;
+use crate::powershell_parser::PowershellParseOutcome;
+use crate::powershell_parser::parse_with_powershell_ast;
 
-pub(crate) fn parse_powershell_script(script: &str) -> Vec<ParsedCommand> {
+pub(crate) fn parse_powershell_script(
+    executable: Option<&str>,
+    script: &str,
+) -> Vec<ParsedCommand> {
     let script = strip_utf8_prefix(script).trim();
-    if script.is_empty() || contains_script_syntax(script) {
+    if script.is_empty() {
         return vec![unknown(script)];
+    }
+
+    if let Some(executable) = executable
+        && let PowershellParseOutcome::Commands(commands) =
+            parse_with_powershell_ast(executable, script)
+    {
+        return summarize_parts(script, commands);
     }
 
     let Some(parts) = split_parts(script) else {
         return vec![unknown(script)];
     };
+    summarize_parts(script, parts.into_iter().map(|part| part.tokens).collect())
+}
+
+fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> {
     let mut out = Vec::new();
     let mut cwd: Option<String> = None;
     let mut prior_list_path: Option<String> = None;
 
-    for part in parts {
-        if part.tokens.is_empty() {
+    for tokens in parts {
+        if tokens.is_empty() {
             continue;
         }
-        let Some((head, tail)) = part.tokens.split_first() else {
+        let Some((head, tail)) = tokens.split_first() else {
             continue;
         };
         let head_lower = head.to_ascii_lowercase();
@@ -43,7 +59,7 @@ pub(crate) fn parse_powershell_script(script: &str) -> Vec<ParsedCommand> {
             return vec![unknown(script)];
         }
 
-        let parsed = summarize_tokens(&part.tokens);
+        let parsed = summarize_tokens(&tokens);
         let parsed = match parsed {
             ParsedCommand::Read { cmd, name, path } => {
                 let path = apply_cwd_to_path(cwd.as_deref(), path);
@@ -66,18 +82,59 @@ pub(crate) fn parse_powershell_script(script: &str) -> Vec<ParsedCommand> {
     }
 
     if out.is_empty() {
-        vec![unknown(script)]
-    } else {
-        out
+        return vec![unknown(script)];
     }
+
+    simplify_powershell_commands(out)
+}
+
+fn simplify_powershell_commands(mut commands: Vec<ParsedCommand>) -> Vec<ParsedCommand> {
+    while let Some(next) = simplify_powershell_commands_once(&commands) {
+        commands = next;
+    }
+    commands
+}
+
+fn simplify_powershell_commands_once(commands: &[ParsedCommand]) -> Option<Vec<ParsedCommand>> {
+    for (idx, pair) in commands.windows(2).enumerate() {
+        let [
+            ParsedCommand::Read {
+                path: read_path, ..
+            },
+            ParsedCommand::Search {
+                cmd,
+                query,
+                path: search_path,
+            },
+        ] = pair
+        else {
+            continue;
+        };
+
+        let display_path = short_display_path(&read_path.to_string_lossy());
+        let should_merge = match search_path.as_deref() {
+            None => true,
+            Some(existing) => existing == display_path,
+        };
+        if !should_merge {
+            continue;
+        }
+
+        let mut merged = Vec::with_capacity(commands.len() - 1);
+        merged.extend_from_slice(&commands[..idx]);
+        merged.push(ParsedCommand::Search {
+            cmd: cmd.clone(),
+            query: query.clone(),
+            path: Some(display_path),
+        });
+        merged.extend_from_slice(&commands[idx + 2..]);
+        return Some(merged);
+    }
+    None
 }
 
 fn strip_utf8_prefix(script: &str) -> &str {
     script.strip_prefix(UTF8_OUTPUT_PREFIX).unwrap_or(script)
-}
-
-fn contains_script_syntax(script: &str) -> bool {
-    script.contains('>') || script.contains('<') || script.contains("$(")
 }
 
 #[derive(Debug)]
@@ -187,16 +244,19 @@ fn summarize_read(tokens: &[String], args: &[String]) -> ParsedCommand {
 fn summarize_list(tokens: &[String], args: &[String]) -> ParsedCommand {
     ParsedCommand::ListFiles {
         cmd: ps_join(tokens),
-        path: path_operand(args).map(|path| short_display_path(&path)),
+        path: summarize_path_targets(path_operands(args)),
     }
 }
 
 fn summarize_select_string(tokens: &[String], args: &[String]) -> ParsedCommand {
+    let operands = select_string_operands(args);
     let query = named_value(args, &["-pattern", "-simplematch", "-regex"])
-        .or_else(|| positional_operands(args).first().cloned());
-    let path = named_value(args, &["-path", "-literalpath"])
-        .or_else(|| positional_operands(args).get(1).cloned())
-        .map(|path| short_display_path(&path));
+        .or_else(|| operands.first().cloned());
+    let path =
+        summarize_path_targets(named_path_values(args, &["-path", "-literalpath"])).or_else(|| {
+            let path_index = usize::from(query == operands.first().cloned());
+            summarize_path_targets(operands.into_iter().skip(path_index).collect())
+        });
     ParsedCommand::Search {
         cmd: ps_join(tokens),
         query,
@@ -228,13 +288,13 @@ fn summarize_rg(tokens: &[String], args: &[String]) -> ParsedCommand {
     if has_files_flag {
         ParsedCommand::ListFiles {
             cmd: ps_join(tokens),
-            path: operands.first().map(|path| short_display_path(path)),
+            path: summarize_path_targets(operands.first().cloned().into_iter().collect()),
         }
     } else {
         ParsedCommand::Search {
             cmd: ps_join(tokens),
             query: operands.first().cloned(),
-            path: operands.get(1).map(|path| short_display_path(path)),
+            path: summarize_path_targets(operands.into_iter().skip(1).collect()),
         }
     }
 }
@@ -263,19 +323,20 @@ fn summarize_git(tokens: &[String], args: &[String]) -> ParsedCommand {
             ParsedCommand::Search {
                 cmd: ps_join(tokens),
                 query,
-                path: operands
-                    .get(path_index)
-                    .map(|path| short_display_path(path)),
+                path: summarize_path_targets(operands.into_iter().skip(path_index).collect()),
             }
         }
         Some((subcmd, sub_tail)) if subcmd == "ls-files" => ParsedCommand::ListFiles {
             cmd: ps_join(tokens),
-            path: positional_operands_skipping(
-                sub_tail,
-                &["--exclude", "--exclude-from", "--pathspec-from-file"],
-            )
-            .first()
-            .map(|path| short_display_path(path)),
+            path: summarize_path_targets(
+                positional_operands_skipping(
+                    sub_tail,
+                    &["--exclude", "--exclude-from", "--pathspec-from-file"],
+                )
+                .into_iter()
+                .take(1)
+                .collect(),
+            ),
         },
         _ => ParsedCommand::Unknown {
             cmd: ps_join(tokens),
@@ -296,9 +357,13 @@ fn path_operand(args: &[String]) -> Option<String> {
 }
 
 fn path_operands(args: &[String]) -> Vec<String> {
-    named_value(args, &["-path", "-literalpath"])
+    named_path_values(args, &["-path", "-literalpath"])
         .into_iter()
-        .chain(positional_operands(args))
+        .chain(
+            positional_operands(args)
+                .into_iter()
+                .flat_map(|value| split_path_list(&value)),
+        )
         .collect()
 }
 
@@ -318,6 +383,77 @@ fn named_value(args: &[String], names: &[&str]) -> Option<String> {
         i += 1;
     }
     None
+}
+
+fn named_path_values(args: &[String], names: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        let lower = arg.to_ascii_lowercase();
+        if let Some((name, _)) = lower.split_once('=')
+            && names.contains(&name)
+        {
+            if let Some((_, value)) = arg.split_once('=') {
+                out.extend(split_path_list(value));
+            }
+            i += 1;
+            continue;
+        }
+        if names.contains(&lower.as_str()) {
+            if let Some(value) = args.get(i + 1) {
+                out.extend(split_path_list(value));
+                i += 2;
+                continue;
+            }
+            break;
+        }
+        i += 1;
+    }
+    out
+}
+
+fn summarize_path_targets(paths: Vec<String>) -> Option<String> {
+    let display_paths: Vec<String> = paths
+        .into_iter()
+        .map(|path| short_display_path(&path))
+        .collect();
+    match display_paths.as_slice() {
+        [] => None,
+        [path] => Some(path.clone()),
+        [first, rest @ ..] => Some(format!("{first} +{} more", rest.len())),
+    }
+}
+
+fn split_path_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn select_string_operands(args: &[String]) -> Vec<String> {
+    positional_operands_skipping(
+        args,
+        &[
+            "-path",
+            "-literalpath",
+            "-filter",
+            "-include",
+            "-exclude",
+            "-encoding",
+            "-totalcount",
+            "-first",
+            "-last",
+            "-skip",
+            "-pattern",
+            "-simplematch",
+            "-regex",
+            "-context",
+        ],
+    )
 }
 
 fn positional_operands(args: &[String]) -> Vec<String> {
@@ -496,4 +632,33 @@ fn short_display_path(path: &str) -> String {
 
 fn ps_join(tokens: &[String]) -> String {
     shlex_join(tokens)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use crate::powershell::try_find_powershell_executable_blocking;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn ast_backed_parse_keeps_regex_like_pattern_and_simplifies_pipeline() {
+        let Some(powershell) = try_find_powershell_executable_blocking() else {
+            return;
+        };
+
+        let parsed = parse_powershell_script(
+            powershell.as_path().to_str(),
+            "Get-Content .\\EticketContext.cs | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20",
+        );
+
+        assert_eq!(
+            parsed,
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context '0,20'"
+                    .to_string(),
+                query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
+                path: Some("EticketContext.cs".to_string()),
+            }],
+        );
+    }
 }
