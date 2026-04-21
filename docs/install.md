@@ -12,6 +12,24 @@
 
 The GitHub Release also contains a [DotSlash](https://dotslash-cli.com/) file for the Codex CLI named `codex`. Using a DotSlash file makes it possible to make a lightweight commit to source control to ensure all contributors use the same version of an executable, regardless of what platform they use for development.
 
+### Installing a fork as `codex-xullul`
+
+The repo includes fork installer scripts that install release artifacts from a
+configurable GitHub fork and expose them as `codex-xullul`, so they can coexist
+with the upstream `codex` command.
+
+```bash
+# macOS or Linux
+bash scripts/install/install-codex-xullul.sh --repo xullul/codex
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/install/install-codex-xullul.ps1 -Repo xullul/codex
+```
+
+The scripts default to `xullul/codex`, `latest`, and `codex-xullul`. Override
+those with `--repo`, `--release`, and `--command`, or with
+`CODEX_XULLUL_REPO`, `CODEX_XULLUL_RELEASE`, and `CODEX_XULLUL_COMMAND`.
+
 ### Build from source
 
 ```bash
