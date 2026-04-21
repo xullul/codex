@@ -1,0 +1,43 @@
+---
+source: tui/src/diff_style.rs
+expression: snapshot
+---
+[dark_truecolor]
+add_line=Style::new().bg(Color::Rgb(6, 77, 42))
+add_gutter=Style::new().bg(Color::Rgb(8, 122, 61))
+add_sign=Style::new().green().bg(Color::Rgb(6, 77, 42)).bold()
+del_line=Style::new().bg(Color::Rgb(103, 27, 27))
+del_gutter=Style::new().bg(Color::Rgb(138, 37, 37))
+del_sign=Style::new().red().bg(Color::Rgb(103, 27, 27)).bold()
+
+[light_truecolor]
+add_line=Style::new().bg(Color::Rgb(184, 247, 199))
+add_gutter=Style::new().fg(Color::Rgb(31, 35, 40)).bg(Color::Rgb(120, 226, 146))
+add_sign=Style::new().green().bold()
+del_line=Style::new().bg(Color::Rgb(255, 208, 208))
+del_gutter=Style::new().fg(Color::Rgb(31, 35, 40)).bg(Color::Rgb(255, 150, 150))
+del_sign=Style::new().red().bold()
+
+[dark_ansi256]
+add_line=Style::new().bg(Color::Indexed(22))
+add_gutter=Style::new().bg(Color::Indexed(28))
+add_sign=Style::new().green().bg(Color::Indexed(22)).bold()
+del_line=Style::new().bg(Color::Indexed(52))
+del_gutter=Style::new().bg(Color::Indexed(88))
+del_sign=Style::new().red().bg(Color::Indexed(52)).bold()
+
+[dark_ansi16]
+add_line=Style::new()
+add_gutter=Style::new().dim()
+add_sign=Style::new().green().bold()
+del_line=Style::new()
+del_gutter=Style::new().dim()
+del_sign=Style::new().red().bold()
+
+[strong_custom]
+add_line=Style::new().bg(Color::Rgb(0, 96, 0))
+add_gutter=Style::new().bg(Color::Rgb(8, 122, 61))
+add_sign=Style::new().green().bg(Color::Rgb(0, 96, 0)).bold()
+del_line=Style::new().bg(Color::Rgb(150, 0, 0))
+del_gutter=Style::new().bg(Color::Rgb(138, 37, 37))
+del_sign=Style::new().red().bg(Color::Rgb(150, 0, 0)).bold()

@@ -257,9 +257,8 @@ pub(crate) fn current_syntax_theme() -> Theme {
 /// Raw RGB background colors extracted from syntax theme diff/markup scopes.
 ///
 /// These are theme-provided colors, not yet adapted for any particular color
-/// depth.  [`diff_render`](crate::diff_render) converts them to ratatui
-/// `Color` values via `color_from_rgb_for_level` after deciding whether to
-/// emit truecolor or quantized ANSI-256.
+/// depth.  [`diff_style`](crate::diff_style) converts them to ratatui `Color`
+/// values after deciding whether to emit truecolor or quantized ANSI-256.
 ///
 /// Both fields are `None` when the active theme defines no relevant scope
 /// backgrounds, in which case the diff renderer falls back to its hardcoded
