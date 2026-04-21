@@ -1,10 +1,11 @@
 ---
 source: tui/src/history_cell.rs
+assertion_line: 3285
 expression: rendered
 ---
 /ps
 
-Background terminals
+• Background terminals
 
   • rg "foo" src --glob '**/*. [...]
     ↳ searching...

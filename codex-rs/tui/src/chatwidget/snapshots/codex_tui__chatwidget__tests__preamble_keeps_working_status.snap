@@ -1,9 +1,10 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
+assertion_line: 249
 expression: normalized_backend_snapshot(terminal.backend())
 ---
 "                                                                                "
-"• Working (0s • esc to interrupt)                                               "
+"• Codex Working · 0s · esc interrupt · 1 active                                 "
 "                                                                                "
 "                                                                                "
 "› Ask Codex to do anything                                                      "
