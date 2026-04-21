@@ -1,9 +1,10 @@
 ---
 source: tui/src/history_cell.rs
+assertion_line: 3182
 expression: rendered
 ---
 /ps
 
-Background terminals
+• Background terminals
 
   • No background terminals running.

@@ -1727,7 +1727,10 @@ mod tests {
         pane.render(area, &mut buf);
 
         let bufs = snapshot_buffer(&buf);
-        assert!(bufs.contains("• Working"), "expected Working header");
+        assert!(
+            bufs.contains("• Codex Working"),
+            "expected Codex Working header"
+        );
     }
 
     #[test]

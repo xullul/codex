@@ -1,9 +1,10 @@
 ---
 source: tui/src/chatwidget/tests/mcp_startup.rs
+assertion_line: 23
 expression: normalized_backend_snapshot(terminal.backend())
 ---
 "                                                                                "
-"• Booting MCP server: alpha (0s • esc to interrupt)                             "
+"• Codex Booting MCP server: alpha · 0s · esc interrupt · 1 active               "
 "                                                                                "
 "                                                                                "
 "› Ask Codex to do anything                                                      "
