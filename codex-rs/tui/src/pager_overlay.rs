@@ -23,6 +23,7 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
+use crate::ratatui_reflow::ratatui_reflow_safe_paragraph;
 use crate::render::Insets;
 use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
@@ -409,9 +410,8 @@ struct CellRenderable {
 
 impl Renderable for CellRenderable {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let p = Paragraph::new(Text::from(self.cell.transcript_lines(area.width)))
-            .style(self.style)
-            .wrap(Wrap { trim: false });
+        let p = ratatui_reflow_safe_paragraph(self.cell.transcript_lines(area.width), area.width)
+            .style(self.style);
         p.render(area, buf);
     }
 

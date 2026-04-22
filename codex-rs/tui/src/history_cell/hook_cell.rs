@@ -12,6 +12,7 @@
 //! 4. Completed runs only persist when they have output or a non-success status.
 use super::HistoryCell;
 use crate::exec_cell::spinner;
+use crate::ratatui_reflow::ratatui_reflow_safe_paragraph;
 use crate::render::renderable::Renderable;
 use crate::shimmer::shimmer_spans;
 use codex_protocol::protocol::HookEventName;
@@ -21,8 +22,6 @@ use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookRunSummary;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
-use ratatui::widgets::Paragraph;
-use ratatui::widgets::Wrap;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -356,7 +355,7 @@ impl HistoryCell for HookCell {
 impl Renderable for HookCell {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let lines = self.display_lines(area.width);
-        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        let paragraph = ratatui_reflow_safe_paragraph(lines, area.width);
         paragraph.render(area, buf);
     }
 

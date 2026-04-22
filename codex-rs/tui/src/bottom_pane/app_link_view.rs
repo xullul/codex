@@ -28,6 +28,7 @@ use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::key_hint;
+use crate::ratatui_reflow::ratatui_reflow_safe_line_count;
 use crate::render::Insets;
 use crate::render::RectExt as _;
 use crate::style::user_message_style;
@@ -500,12 +501,14 @@ impl crate::render::renderable::Renderable for AppLinkView {
     fn desired_height(&self, width: u16) -> u16 {
         let content_width = width.saturating_sub(4).max(1);
         let content_lines = self.content_lines(content_width);
-        let content_rows = Paragraph::new(content_lines)
-            .wrap(Wrap { trim: false })
-            .line_count(content_width)
-            .max(1) as u16;
+        let content_rows: u16 = ratatui_reflow_safe_line_count(content_lines, content_width)
+            .max(1)
+            .try_into()
+            .unwrap_or(u16::MAX);
         let action_rows_height = self.action_rows_height(content_width);
-        content_rows + action_rows_height + 3
+        content_rows
+            .saturating_add(action_rows_height)
+            .saturating_add(3)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {

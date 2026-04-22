@@ -5,6 +5,7 @@ use super::model::ExecCall;
 use super::model::ExecCell;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
+use crate::ratatui_reflow::ratatui_reflow_safe_line_count;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
@@ -21,7 +22,9 @@ use itertools::Itertools;
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::style::Stylize;
+#[cfg(test)]
 use ratatui::widgets::Paragraph;
+#[cfg(test)]
 use ratatui::widgets::Wrap;
 use textwrap::WordSplitter;
 use unicode_width::UnicodeWidthStr;
@@ -557,10 +560,7 @@ impl ExecCell {
                 if is_whitespace_only {
                     line.width().div_ceil(usize::from(width)).max(1)
                 } else {
-                    Paragraph::new(Text::from(vec![line.clone()]))
-                        .wrap(Wrap { trim: false })
-                        .line_count(width)
-                        .max(1)
+                    ratatui_reflow_safe_line_count(vec![line.clone()], width).max(1)
                 }
             })
             .collect();
@@ -638,11 +638,10 @@ impl ExecCell {
         width: u16,
         prefix: Option<&Line<'static>>,
     ) -> usize {
-        Paragraph::new(Text::from(vec![Self::output_ellipsis_line_with_prefix(
-            omitted, prefix,
-        )]))
-        .wrap(Wrap { trim: false })
-        .line_count(width)
+        ratatui_reflow_safe_line_count(
+            vec![Self::output_ellipsis_line_with_prefix(omitted, prefix)],
+            width,
+        )
         .max(1)
     }
 

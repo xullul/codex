@@ -23,6 +23,9 @@ use crate::legacy_core::config::Config;
 use crate::legacy_core::web_search_detail;
 use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
+use crate::ratatui_reflow::ratatui_reflow_safe_line_count;
+use crate::ratatui_reflow::ratatui_reflow_safe_paragraph;
+use crate::ratatui_reflow::ratatui_reflow_safe_width;
 use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
@@ -80,7 +83,9 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Styled;
 use ratatui::style::Stylize;
+#[cfg(test)]
 use ratatui::widgets::Paragraph;
+#[cfg(test)]
 use ratatui::widgets::Wrap;
 use std::any::Any;
 use std::collections::HashMap;
@@ -124,11 +129,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     /// for lines containing URL-like tokens that are wider than the
     /// terminal — the logical line count would undercount.
     fn desired_height(&self, width: u16) -> u16 {
-        Paragraph::new(Text::from(self.display_lines(width)))
-            .wrap(Wrap { trim: false })
-            .line_count(width)
+        ratatui_reflow_safe_line_count(self.display_lines(width), width)
             .try_into()
-            .unwrap_or(0)
+            .unwrap_or(u16::MAX)
     }
 
     /// Returns lines for the transcript overlay (`Ctrl+T`).
@@ -158,11 +161,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
             return 1;
         }
 
-        Paragraph::new(Text::from(lines))
-            .wrap(Wrap { trim: false })
-            .line_count(width)
+        ratatui_reflow_safe_line_count(lines, width)
             .try_into()
-            .unwrap_or(0)
+            .unwrap_or(u16::MAX)
     }
 
     fn is_stream_continuation(&self) -> bool {
@@ -187,12 +188,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 impl Renderable for Box<dyn HistoryCell> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let lines = self.display_lines(area.width);
-        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        let paragraph = ratatui_reflow_safe_paragraph(lines, area.width);
         let y = if area.height == 0 {
             0
         } else {
             let overflow = paragraph
-                .line_count(area.width)
+                .line_count(ratatui_reflow_safe_width(area.width))
                 .saturating_sub(usize::from(area.height));
             u16::try_from(overflow).unwrap_or(u16::MAX)
         };
@@ -3518,6 +3519,15 @@ mod tests {
         let cell = AgentMessageCell::new(vec![Line::default()], /*is_first_line*/ false);
         assert_eq!(cell.transcript_lines(/*width*/ 80), vec![Line::from("  ")]);
         assert_eq!(cell.desired_transcript_height(/*width*/ 80), 1);
+    }
+
+    #[test]
+    fn agent_message_with_huge_url_like_token_does_not_overflow_ratatui_reflow() {
+        let token = format!("https://example.test/{}", "a".repeat(70_000));
+        let cell = AgentMessageCell::new(vec![Line::from(token)], /*is_first_line*/ true);
+
+        assert_eq!(cell.desired_height(u16::MAX), 6);
+        assert_eq!(cell.desired_transcript_height(u16::MAX), 6);
     }
 
     #[test]
