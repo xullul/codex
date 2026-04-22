@@ -424,13 +424,13 @@ fn render_changes_block(rows: Vec<Row>, wrap_cols: usize, cwd: &Path) -> Vec<RtL
             FileChange::Delete { .. } => "Deleted",
             _ => "Edited",
         };
-        header_spans.push(verb.bold());
+        header_spans.push(verb.cyan().bold());
         header_spans.push(" ".into());
         header_spans.extend(render_path(row));
         header_spans.push(" ".into());
         header_spans.extend(render_line_count_summary(row.added, row.removed));
     } else {
-        header_spans.push("Edited".bold());
+        header_spans.push("Edited".cyan().bold());
         header_spans.push(format!(" {file_count} {noun} ").into());
         header_spans.extend(render_line_count_summary(total_added, total_removed));
     }
@@ -740,12 +740,21 @@ fn render_change(
 /// possible, keeping output stable in jj/no-`.git` workspaces (e.g. image
 /// tool calls should show `example.png` instead of an absolute path).
 pub(crate) fn display_path_for(path: &Path, cwd: &Path) -> String {
-    if path.is_relative() {
+    if path.is_relative() && !path.has_root() {
         return path.display().to_string();
     }
 
     if let Ok(stripped) = path.strip_prefix(cwd) {
         return stripped.display().to_string();
+    }
+
+    let path_text = path.display().to_string();
+    let cwd_text = cwd.display().to_string();
+    for separator in ['/', '\\'] {
+        let prefix = format!("{cwd_text}{separator}");
+        if let Some(stripped) = path_text.strip_prefix(&prefix) {
+            return stripped.to_string();
+        }
     }
 
     let path_in_same_repo = match (get_git_repo_root(cwd), get_git_repo_root(path)) {

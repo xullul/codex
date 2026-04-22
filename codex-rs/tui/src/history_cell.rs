@@ -615,9 +615,17 @@ impl HistoryCell for UnifiedExecInteractionCell {
         let waited_only = self.stdin.is_empty();
 
         let mut header_spans = if waited_only {
-            vec!["• Waited for background terminal".bold()]
+            vec![
+                "• ".dim(),
+                "Waited".cyan().bold(),
+                " for background terminal".into(),
+            ]
         } else {
-            vec!["↳ ".dim(), "Interacted with background terminal".bold()]
+            vec![
+                "↳ ".dim(),
+                "Interacted".cyan().bold(),
+                " with background terminal".into(),
+            ]
         };
         if let Some(command) = &self.command_display
             && !command.is_empty()
@@ -685,7 +693,7 @@ impl HistoryCell for UnifiedExecProcessesCell {
         let wrap_width = width as usize;
         let max_processes = 16usize;
         let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(vec!["Background terminals".bold()].into());
+        out.push(vec!["• ".dim(), "Background terminals".cyan().bold()].into());
         out.push("".into());
 
         if self.processes.is_empty() {
@@ -1589,7 +1597,12 @@ impl HistoryCell for McpToolCallCell {
         };
 
         let invocation_line = line_to_static(&format_mcp_invocation(self.invocation.clone()));
-        let mut compact_spans = vec![bullet.clone(), " ".into(), header_text.bold(), " ".into()];
+        let mut compact_spans = vec![
+            bullet.clone(),
+            " ".into(),
+            header_text.cyan().bold(),
+            " ".into(),
+        ];
         let mut compact_header = Line::from(compact_spans.clone());
         let reserved = compact_header.width();
 
@@ -2629,7 +2642,7 @@ pub(crate) fn new_view_image_tool_call(path: AbsolutePathBuf, cwd: &Path) -> Pla
     let display_path = display_path_for(path.as_path(), cwd);
 
     let lines: Vec<Line<'static>> = vec![
-        vec!["• ".dim(), "Viewed Image".bold()].into(),
+        vec!["• ".dim(), "Viewed Image".cyan().bold()].into(),
         vec!["  └ ".dim(), display_path.dim()].into(),
     ];
 
@@ -2644,7 +2657,7 @@ pub(crate) fn new_image_generation_call(
     let detail = revised_prompt.unwrap_or_else(|| call_id.clone());
 
     let mut lines: Vec<Line<'static>> = vec![
-        vec!["• ".dim(), "Generated Image:".bold()].into(),
+        vec!["• ".dim(), "Generated Image".cyan().bold()].into(),
         vec!["  └ ".dim(), detail.dim()].into(),
     ];
     if let Some(saved_path) = saved_path {
@@ -3055,7 +3068,7 @@ mod tests {
         assert_eq!(
             render_lines(&cell.display_lines(/*width*/ 80)),
             vec![
-                "• Generated Image:".to_string(),
+                "• Generated Image".to_string(),
                 "  └ A tiny blue square".to_string(),
                 expected_saved_path,
             ],

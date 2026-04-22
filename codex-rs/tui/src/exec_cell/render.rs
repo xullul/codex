@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use super::action_summary::summarize_call;
 use super::model::CommandOutput;
 use super::model::ExecCall;
 use super::model::ExecCell;
@@ -373,73 +374,122 @@ impl ExecCell {
             Some(false) => "•".red().bold(),
             None => spinner(call.start_time, self.animations_enabled()),
         };
-        let is_interaction = call.is_unified_exec_interaction();
-        let title = if is_interaction {
-            ""
-        } else if self.is_active() {
-            "Running"
-        } else if call.is_user_shell_command() {
-            "You ran"
-        } else {
-            "Ran"
-        };
-
-        let mut header_line = if is_interaction {
-            Line::from(vec![bullet.clone(), " ".into()])
-        } else {
-            Line::from(vec![bullet.clone(), " ".into(), title.bold(), " ".into()])
-        };
-        let header_prefix_width = header_line.width();
-
         let cmd_display = if call.is_unified_exec_interaction() {
             format_unified_exec_interaction(&call.command, call.interaction_input.as_deref())
         } else {
             strip_bash_lc_and_escape(&call.command)
         };
-        let highlighted_lines = highlight_bash_to_lines(&cmd_display);
+        let action_summary = summarize_call(call, &cmd_display);
+        let mut lines: Vec<Line<'static>> = if let Some(summary) = &action_summary {
+            let mut header_line = Line::from(vec![
+                bullet.clone(),
+                " ".into(),
+                summary.verb(self.is_active()).cyan().bold(),
+            ]);
+            let mut continuation_lines: Vec<Line<'static>> = Vec::new();
+            if let Some(detail) = &summary.detail {
+                header_line.push_span(" ");
+                let header_prefix_width = header_line.width();
+                let detail_line = Line::from(detail.clone().dim());
+                let available_first_width =
+                    (width as usize).saturating_sub(header_prefix_width).max(1);
+                let first_opts = RtOptions::new(available_first_width)
+                    .word_splitter(WordSplitter::NoHyphenation);
 
-        let continuation_wrap_width = layout.command_continuation.wrap_width(width);
-        let continuation_opts =
-            RtOptions::new(continuation_wrap_width).word_splitter(WordSplitter::NoHyphenation);
-
-        let mut continuation_lines: Vec<Line<'static>> = Vec::new();
-
-        if let Some((first, rest)) = highlighted_lines.split_first() {
-            let available_first_width = (width as usize).saturating_sub(header_prefix_width).max(1);
-            let first_opts =
-                RtOptions::new(available_first_width).word_splitter(WordSplitter::NoHyphenation);
-
-            let mut first_wrapped: Vec<Line<'static>> = Vec::new();
-            push_owned_lines(&adaptive_wrap_line(first, first_opts), &mut first_wrapped);
-            let mut first_wrapped_iter = first_wrapped.into_iter();
-            if let Some(first_segment) = first_wrapped_iter.next() {
-                header_line.extend(first_segment);
-            }
-            continuation_lines.extend(first_wrapped_iter);
-
-            for line in rest {
+                let mut first_wrapped: Vec<Line<'static>> = Vec::new();
                 push_owned_lines(
-                    &adaptive_wrap_line(line, continuation_opts.clone()),
-                    &mut continuation_lines,
+                    &adaptive_wrap_line(&detail_line, first_opts),
+                    &mut first_wrapped,
                 );
+                let mut first_wrapped_iter = first_wrapped.into_iter();
+                if let Some(first_segment) = first_wrapped_iter.next() {
+                    header_line.extend(first_segment);
+                }
+                continuation_lines.extend(first_wrapped_iter);
             }
-        }
 
-        let mut lines: Vec<Line<'static>> = vec![header_line];
+            let mut lines = vec![header_line];
+            let continuation_lines = Self::limit_lines_from_start(
+                &continuation_lines,
+                layout.command_continuation_max_lines,
+            );
+            if !continuation_lines.is_empty() {
+                lines.extend(prefix_lines(
+                    continuation_lines,
+                    Span::from(layout.command_continuation.initial_prefix).dim(),
+                    Span::from(layout.command_continuation.subsequent_prefix).dim(),
+                ));
+            }
+            lines
+        } else {
+            let is_interaction = call.is_unified_exec_interaction();
+            let title = if is_interaction {
+                ""
+            } else if self.is_active() {
+                "Running"
+            } else if call.is_user_shell_command() {
+                "You ran"
+            } else {
+                "Ran"
+            };
 
-        let continuation_lines = Self::limit_lines_from_start(
-            &continuation_lines,
-            layout.command_continuation_max_lines,
-        );
-        if !continuation_lines.is_empty() {
-            lines.extend(prefix_lines(
-                continuation_lines,
-                Span::from(layout.command_continuation.initial_prefix).dim(),
-                Span::from(layout.command_continuation.subsequent_prefix).dim(),
-            ));
-        }
+            let mut header_line = if is_interaction {
+                Line::from(vec![bullet.clone(), " ".into()])
+            } else {
+                Line::from(vec![bullet.clone(), " ".into(), title.bold(), " ".into()])
+            };
+            let header_prefix_width = header_line.width();
+            let highlighted_lines = highlight_bash_to_lines(&cmd_display);
+
+            let continuation_wrap_width = layout.command_continuation.wrap_width(width);
+            let continuation_opts =
+                RtOptions::new(continuation_wrap_width).word_splitter(WordSplitter::NoHyphenation);
+
+            let mut continuation_lines: Vec<Line<'static>> = Vec::new();
+
+            if let Some((first, rest)) = highlighted_lines.split_first() {
+                let available_first_width =
+                    (width as usize).saturating_sub(header_prefix_width).max(1);
+                let first_opts = RtOptions::new(available_first_width)
+                    .word_splitter(WordSplitter::NoHyphenation);
+
+                let mut first_wrapped: Vec<Line<'static>> = Vec::new();
+                push_owned_lines(&adaptive_wrap_line(first, first_opts), &mut first_wrapped);
+                let mut first_wrapped_iter = first_wrapped.into_iter();
+                if let Some(first_segment) = first_wrapped_iter.next() {
+                    header_line.extend(first_segment);
+                }
+                continuation_lines.extend(first_wrapped_iter);
+
+                for line in rest {
+                    push_owned_lines(
+                        &adaptive_wrap_line(line, continuation_opts.clone()),
+                        &mut continuation_lines,
+                    );
+                }
+            }
+
+            let mut lines: Vec<Line<'static>> = vec![header_line];
+
+            let continuation_lines = Self::limit_lines_from_start(
+                &continuation_lines,
+                layout.command_continuation_max_lines,
+            );
+            if !continuation_lines.is_empty() {
+                lines.extend(prefix_lines(
+                    continuation_lines,
+                    Span::from(layout.command_continuation.initial_prefix).dim(),
+                    Span::from(layout.command_continuation.subsequent_prefix).dim(),
+                ));
+            }
+            lines
+        };
 
         if let Some(output) = call.output.as_ref() {
+            let suppress_success_output = output.exit_code == 0
+                && action_summary
+                    .as_ref()
+                    .is_some_and(|summary| summary.suppress_success_output);
             let line_limit = if call.is_user_shell_command() {
                 USER_SHELL_TOOL_CALL_MAX_LINES
             } else {
@@ -461,14 +511,14 @@ impl ExecCell {
             };
 
             if raw_output.lines.is_empty() {
-                if !call.is_unified_exec_interaction() {
+                if !call.is_unified_exec_interaction() && !suppress_success_output {
                     lines.extend(prefix_lines(
                         vec![Line::from("(no output)".dim())],
                         Span::from(layout.output_block.initial_prefix).dim(),
                         Span::from(layout.output_block.subsequent_prefix),
                     ));
                 }
-            } else {
+            } else if !suppress_success_output {
                 // Wrap first so that truncation is applied to on-screen lines
                 // rather than logical lines. This ensures that a small number
                 // of very long lines cannot flood the viewport.
