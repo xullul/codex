@@ -1328,6 +1328,30 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_content_line_range_foreach_is_read() {
+        let script = "$p='src\\effect-query.ts'; $lines=Get-Content $p; foreach ($i in 40..80) { if ($i -le $lines.Count) { '{0}:{1}' -f $i, $lines[$i-1] } }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"src\\\\effect-query.ts\"".to_string(),
+                name: "effect-query.ts".to_string(),
+                path: PathBuf::from("src\\effect-query.ts"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_arbitrary_foreach_stays_unknown() {
+        let script = "$p='src\\effect-query.ts'; $lines=Get-Content $p; foreach ($i in 40..80) { Remove-Item $p; '{0}:{1}' -f $i, $lines[$i-1] }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Unknown {
+                cmd: script.to_string(),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_content_with_select_string_pipe_is_search() {
         assert_parsed(
             &vec_str(&[

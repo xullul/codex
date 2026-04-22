@@ -5,6 +5,7 @@ use codex_protocol::parse_command::ParsedCommand;
 
 use crate::parse_command::shlex_join;
 use crate::powershell::UTF8_OUTPUT_PREFIX;
+use crate::powershell_line_range::summarize_line_range_preview;
 use crate::powershell_parser::PowershellParseOutcome;
 use crate::powershell_parser::parse_with_powershell_ast;
 
@@ -15,6 +16,10 @@ pub(crate) fn parse_powershell_script(
     let script = strip_utf8_prefix(script).trim();
     if script.is_empty() {
         return vec![unknown(script)];
+    }
+
+    if let Some(read) = summarize_line_range_preview(script) {
+        return vec![read];
     }
 
     if let Some(executable) = executable

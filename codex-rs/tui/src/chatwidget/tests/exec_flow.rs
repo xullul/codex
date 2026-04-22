@@ -1018,7 +1018,7 @@ async fn powershell_exec_renders_semantic_search_and_keeps_raw_transcript() {
 #[tokio::test]
 async fn powershell_exec_renders_semantic_variable_read_and_keeps_raw_transcript() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let raw_cmd = "$p='codex-rs\\config\\src\\config_toml.rs'; (Get-Content $p | Select-Object -Index (680..780))";
+    let raw_cmd = "$p='codex-rs\\config\\src\\config_toml.rs'; $lines=Get-Content $p; foreach ($i in 680..780) { if ($i -le $lines.Count) { '{0}:{1}' -f $i, $lines[$i-1] } }";
     let command = vec![
         "powershell.exe".to_string(),
         "-NoProfile".to_string(),
@@ -1050,6 +1050,10 @@ async fn powershell_exec_renders_semantic_variable_read_and_keeps_raw_transcript
     assert!(
         !active.contains("Get-Content"),
         "expected semantic summary instead of raw command, got {active}"
+    );
+    assert!(
+        !active.contains("foreach"),
+        "expected semantic summary instead of raw loop, got {active}"
     );
     assert_chatwidget_snapshot!("powershell_semantic_variable_read_active", active);
 
