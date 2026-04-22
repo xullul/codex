@@ -7,6 +7,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
 
+use crate::ratatui_reflow::ratatui_reflow_safe_width;
 use crate::render::Insets;
 use crate::render::RectExt as _;
 
@@ -106,10 +107,18 @@ impl<'a> Renderable for Line<'a> {
 
 impl<'a> Renderable for Paragraph<'a> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.render_ref(area, buf);
+        self.render_ref(
+            Rect {
+                width: ratatui_reflow_safe_width(area.width),
+                ..area
+            },
+            buf,
+        );
     }
     fn desired_height(&self, width: u16) -> u16 {
-        self.line_count(width) as u16
+        self.line_count(ratatui_reflow_safe_width(width))
+            .try_into()
+            .unwrap_or(u16::MAX)
     }
 }
 
@@ -378,9 +387,13 @@ impl<'a> Renderable for InsetRenderable<'a> {
     }
     fn desired_height(&self, width: u16) -> u16 {
         self.child
-            .desired_height(width - self.insets.left - self.insets.right)
-            + self.insets.top
-            + self.insets.bottom
+            .desired_height(
+                width
+                    .saturating_sub(self.insets.left)
+                    .saturating_sub(self.insets.right),
+            )
+            .saturating_add(self.insets.top)
+            .saturating_add(self.insets.bottom)
     }
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.child.cursor_pos(area.inset(self.insets))
