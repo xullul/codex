@@ -1310,6 +1310,24 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_content_with_variable_assignment_and_wrapped_select_object_pipe_is_read() {
+        let parsed = parse_command(&vec_str(&[
+            "pwsh",
+            "-Command",
+            "$p='codex-rs\\config\\src\\config_toml.rs'; (Get-Content $p | Select-Object -Index (680..780))",
+        ]));
+
+        assert_eq!(
+            parsed,
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"codex-rs\\\\config\\\\src\\\\config_toml.rs\"".to_string(),
+                name: "config_toml.rs".to_string(),
+                path: PathBuf::from("codex-rs\\config\\src\\config_toml.rs"),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_content_with_select_string_pipe_is_search() {
         assert_parsed(
             &vec_str(&[
@@ -1317,6 +1335,25 @@ mod tests {
                 "-Command",
                 "Get-Content EticketContext.cs | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20",
             ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context '0,20'"
+                    .to_string(),
+                query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
+                path: Some("EticketContext.cs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_content_with_variable_assignment_and_wrapped_select_string_pipe_is_search() {
+        let parsed = parse_command(&vec_str(&[
+            "pwsh",
+            "-Command",
+            "$p='EticketContext.cs'; (Get-Content $p | Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context 0,20)",
+        ]));
+
+        assert_eq!(
+            parsed,
             vec![ParsedCommand::Search {
                 cmd: "Select-String -Pattern 'Entity<Asset>|e => e.AssetTag' -Context '0,20'"
                     .to_string(),

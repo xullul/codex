@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use codex_protocol::parse_command::ParsedCommand;
@@ -33,9 +34,17 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
     let mut out = Vec::new();
     let mut cwd: Option<String> = None;
     let mut prior_list_path: Option<String> = None;
+    let mut variables: HashMap<String, String> = HashMap::new();
+    let mut pending_wrapping_closes = 0;
 
-    for tokens in parts {
+    for raw_tokens in parts {
+        let tokens = normalize_part_tokens(raw_tokens, &variables, &mut pending_wrapping_closes);
         if tokens.is_empty() {
+            continue;
+        }
+        if let Some((name, value)) = simple_variable_assignment(&tokens) {
+            variables.insert(name, value);
+            prior_list_path = None;
             continue;
         }
         let Some((head, tail)) = tokens.split_first() else {
@@ -86,6 +95,85 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
     }
 
     simplify_powershell_commands(out)
+}
+
+fn normalize_part_tokens(
+    mut tokens: Vec<String>,
+    variables: &HashMap<String, String>,
+    pending_wrapping_closes: &mut usize,
+) -> Vec<String> {
+    trim_wrapping_parentheses(&mut tokens, pending_wrapping_closes);
+    tokens.retain(|token| !token.is_empty());
+    tokens
+        .into_iter()
+        .map(|token| resolved_variable_value(&token, variables).unwrap_or(token))
+        .collect()
+}
+
+fn trim_wrapping_parentheses(tokens: &mut [String], pending_wrapping_closes: &mut usize) {
+    if let Some(first) = tokens.first_mut() {
+        let leading_opens = first.chars().take_while(|ch| *ch == '(').count();
+        if leading_opens > 0 {
+            let trimmed = first.trim_start_matches('(').to_string();
+            if !trimmed.is_empty() && looks_like_wrapped_command_head(&trimmed) {
+                *first = trimmed;
+                *pending_wrapping_closes += leading_opens;
+            }
+        }
+    }
+    if *pending_wrapping_closes == 0 {
+        return;
+    }
+    if let Some(last) = tokens.last_mut() {
+        let removed = strip_trailing_closing_parens(last, *pending_wrapping_closes);
+        *pending_wrapping_closes -= removed;
+    }
+}
+
+fn looks_like_wrapped_command_head(head: &str) -> bool {
+    let head_lower = head.to_ascii_lowercase();
+    matches!(
+        head_lower.as_str(),
+        "get-content"
+            | "gc"
+            | "cat"
+            | "type"
+            | "get-childitem"
+            | "gci"
+            | "dir"
+            | "ls"
+            | "get-item"
+            | "gi"
+            | "select-string"
+            | "sls"
+            | "select-object"
+            | "select"
+            | "measure-object"
+            | "measure"
+            | "out-string"
+            | "format-table"
+            | "set-location"
+            | "cd"
+            | "chdir"
+            | "sl"
+            | "rg"
+            | "git"
+            | "foreach-object"
+            | "foreach"
+            | "%"
+            | "where-object"
+            | "?"
+    ) || simple_variable_name(head).is_some()
+        || head.contains('=')
+}
+
+fn strip_trailing_closing_parens(token: &mut String, max_to_strip: usize) -> usize {
+    let trailing = token.chars().rev().take_while(|ch| *ch == ')').count();
+    let removed = trailing.min(max_to_strip);
+    if removed > 0 {
+        token.truncate(token.len() - removed);
+    }
+    removed
 }
 
 fn simplify_powershell_commands(mut commands: Vec<ParsedCommand>) -> Vec<ParsedCommand> {
@@ -342,6 +430,50 @@ fn summarize_git(tokens: &[String], args: &[String]) -> ParsedCommand {
             cmd: ps_join(tokens),
         },
     }
+}
+
+fn simple_variable_assignment(tokens: &[String]) -> Option<(String, String)> {
+    match tokens {
+        [token] => assignment_parts(token),
+        [lhs, eq, rhs] if eq == "=" => assignment_name(lhs).map(|name| (name, rhs.to_string())),
+        _ => None,
+    }
+}
+
+fn assignment_parts(token: &str) -> Option<(String, String)> {
+    let (lhs, rhs) = token.split_once('=')?;
+    assignment_name(lhs).map(|name| (name, rhs.to_string()))
+}
+
+fn assignment_name(token: &str) -> Option<String> {
+    simple_variable_name(token)
+}
+
+fn resolved_variable_value(token: &str, variables: &HashMap<String, String>) -> Option<String> {
+    let name = simple_variable_name(token)?;
+    variables.get(&name).cloned()
+}
+
+fn simple_variable_name(token: &str) -> Option<String> {
+    if let Some(name) = token
+        .strip_prefix("${")
+        .and_then(|value| value.strip_suffix('}'))
+    {
+        return normalize_variable_name(name);
+    }
+    normalize_variable_name(token.strip_prefix('$')?)
+}
+
+fn normalize_variable_name(name: &str) -> Option<String> {
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return None;
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        return None;
+    }
+    Some(name.to_ascii_lowercase())
 }
 
 fn single_path_operand(args: &[String]) -> Option<String> {
