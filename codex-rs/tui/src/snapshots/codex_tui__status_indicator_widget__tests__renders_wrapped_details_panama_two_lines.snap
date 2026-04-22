@@ -1,8 +1,7 @@
 ---
 source: tui/src/status_indicator_widget.rs
-assertion_line: 400
 expression: terminal.backend()
 ---
-"• Codex Working · 0s · 1 acti…"
+"• Working (0s)                "
 "  └ A man a plan a canal      "
 "    panama                    "

@@ -1,7 +1,6 @@
 ---
 source: tui/src/status_indicator_widget.rs
-assertion_line: 371
 expression: terminal.backend()
 ---
-"• Codex Working · 0…"
+"• Working (0s • esc…"
 "                    "

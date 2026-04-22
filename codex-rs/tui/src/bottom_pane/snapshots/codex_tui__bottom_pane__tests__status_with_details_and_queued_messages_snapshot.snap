@@ -1,9 +1,9 @@
 ---
 source: tui/src/bottom_pane/mod.rs
-assertion_line: 1850
+assertion_line: 1826
 expression: "render_snapshot(&pane, area)"
 ---
-• Codex Working · 0s · esc interrupt · 1 active 
+• Working (0s • esc to interrupt)               
   └ First detail line                           
     Second detail line                          
                                                 

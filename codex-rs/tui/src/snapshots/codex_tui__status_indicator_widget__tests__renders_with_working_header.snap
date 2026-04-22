@@ -1,7 +1,6 @@
 ---
 source: tui/src/status_indicator_widget.rs
-assertion_line: 353
 expression: terminal.backend()
 ---
-"• Codex Working · 0s · esc interrupt · 1 active                                 "
+"• Working (0s • esc to interrupt)                                               "
 "                                                                                "

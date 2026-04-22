@@ -73,47 +73,6 @@ pub fn fmt_elapsed_compact(elapsed_secs: u64) -> String {
     format!("{hours}h {minutes:02}m {seconds:02}s")
 }
 
-struct HudRenderer<'a> {
-    header: &'a str,
-    inline_message: Option<&'a str>,
-    show_interrupt_hint: bool,
-    pretty_elapsed: String,
-    last_resume_at: Instant,
-    animations_enabled: bool,
-}
-
-impl HudRenderer<'_> {
-    fn header_line(&self, width: u16) -> Line<'static> {
-        let mut spans = Vec::with_capacity(12);
-        spans.push(spinner(Some(self.last_resume_at), self.animations_enabled));
-        spans.push(" ".into());
-        spans.push("Codex".magenta().bold());
-        spans.push(" ".dim());
-        if self.animations_enabled {
-            spans.extend(shimmer_spans(self.header));
-        } else if !self.header.is_empty() {
-            spans.push(self.header.to_string().cyan().bold());
-        }
-        spans.push(" · ".dim());
-        spans.push(self.pretty_elapsed.clone().dim());
-        if self.show_interrupt_hint {
-            spans.extend(vec![
-                " · ".dim(),
-                key_hint::plain(KeyCode::Esc).into(),
-                " interrupt".dim(),
-            ]);
-        }
-        spans.push(" · ".dim());
-        spans.push("1 active".dim());
-        if let Some(message) = self.inline_message {
-            spans.push(" · ".dim());
-            spans.push(message.to_string().dim());
-        }
-
-        truncate_line_with_ellipsis_if_overflow(Line::from(spans), usize::from(width))
-    }
-}
-
 impl StatusIndicatorWidget {
     pub(crate) fn new(
         app_event_tx: AppEventSender,
@@ -287,16 +246,36 @@ impl Renderable for StatusIndicatorWidget {
         let elapsed_duration = self.elapsed_duration_at(now);
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
 
+        let mut spans = Vec::with_capacity(5);
+        spans.push(spinner(Some(self.last_resume_at), self.animations_enabled));
+        spans.push(" ".into());
+        if self.animations_enabled {
+            spans.extend(shimmer_spans(&self.header));
+        } else if !self.header.is_empty() {
+            spans.push(self.header.clone().into());
+        }
+        spans.push(" ".into());
+        if self.show_interrupt_hint {
+            spans.extend(vec![
+                format!("({pretty_elapsed} • ").dim(),
+                key_hint::plain(KeyCode::Esc).into(),
+                " to interrupt)".dim(),
+            ]);
+        } else {
+            spans.push(format!("({pretty_elapsed})").dim());
+        }
+        if let Some(message) = &self.inline_message {
+            // Keep optional context after elapsed/interrupt text so that core
+            // interrupt affordances stay in a fixed visual location.
+            spans.push(" · ".dim());
+            spans.push(message.clone().dim());
+        }
+
         let mut lines = Vec::new();
-        let hud = HudRenderer {
-            header: &self.header,
-            inline_message: self.inline_message.as_deref(),
-            show_interrupt_hint: self.show_interrupt_hint,
-            pretty_elapsed,
-            last_resume_at: self.last_resume_at,
-            animations_enabled: self.animations_enabled,
-        };
-        lines.push(hud.header_line(area.width));
+        lines.push(truncate_line_with_ellipsis_if_overflow(
+            Line::from(spans),
+            usize::from(area.width),
+        ));
         if area.height > 1 {
             // If there is enough space, add the details lines below the header.
             let details = self.wrapped_details_lines(area.width);
