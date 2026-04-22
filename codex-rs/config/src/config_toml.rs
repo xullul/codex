@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::permissions_toml::PermissionsToml;
 use crate::profile_toml::ConfigProfile;
@@ -51,6 +52,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReadOnlyAccess;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_path::normalize_for_native_workdir;
 use codex_utils_path::normalize_for_path_comparison;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -752,6 +754,9 @@ fn normalized_project_lookup_keys(path: &Path) -> Vec<String> {
 }
 
 fn normalize_project_lookup_key(key: String) -> String {
+    let key = normalize_for_native_workdir(PathBuf::from(key))
+        .to_string_lossy()
+        .to_string();
     if cfg!(windows) {
         key.to_ascii_lowercase()
     } else {
@@ -775,6 +780,39 @@ fn project_config_for_lookup_key(
     normalized_matches
         .first()
         .map(|(_, project_config)| (**project_config).clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::config_types::TrustLevel;
+    use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    #[cfg(windows)]
+    #[test]
+    fn active_project_matches_verbatim_windows_project_key() {
+        let config = ConfigToml {
+            projects: Some(HashMap::from([(
+                r"\\?\C:\Users\Keenu\KeenuProjects\ETicket\OIS".to_string(),
+                ProjectConfig {
+                    trust_level: Some(TrustLevel::Trusted),
+                },
+            )])),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            config.get_active_project(
+                Path::new(r"C:\Users\Keenu\KeenuProjects\ETicket\OIS"),
+                /*repo_root*/ None,
+            ),
+            Some(ProjectConfig {
+                trust_level: Some(TrustLevel::Trusted),
+            })
+        );
+    }
 }
 
 pub fn validate_reserved_model_provider_ids(

@@ -21,6 +21,7 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use codex_utils_path::normalize_for_native_workdir;
 use dunce::canonicalize as normalize_path;
 use serde::Deserialize;
 use std::io;
@@ -811,6 +812,9 @@ fn normalized_project_trust_keys(path: &Path) -> Vec<String> {
 }
 
 fn normalize_project_trust_lookup_key(key: String) -> String {
+    let key = normalize_for_native_workdir(PathBuf::from(key))
+        .to_string_lossy()
+        .to_string();
     if cfg!(windows) {
         key.to_ascii_lowercase()
     } else {

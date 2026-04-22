@@ -1886,6 +1886,63 @@ async fn project_layer_without_config_toml_is_disabled_when_untrusted_or_unknown
     Ok(())
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn project_layer_accepts_verbatim_windows_trust_key() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let project_root = tmp.path().join("project");
+    let nested = project_root.join("child");
+    tokio::fs::create_dir_all(nested.join(".codex")).await?;
+    tokio::fs::write(project_root.join(".git"), "gitdir: here").await?;
+    tokio::fs::write(
+        nested.join(".codex").join(CONFIG_TOML_FILE),
+        "model = \"gpt-5\"",
+    )
+    .await?;
+
+    let codex_home = tmp.path().join("home_verbatim_trust");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    let verbatim_project_root = format!(r"\\?\{}", project_root.display());
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        format!(
+            r#"[projects.'{verbatim_project_root}']
+trust_level = "trusted"
+"#
+        ),
+    )
+    .await?;
+
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        &codex_home,
+        Some(AbsolutePathBuf::from_absolute_path(&nested)?),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides::default(),
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+        /*host_name*/ None,
+    )
+    .await?;
+    let project_layers: Vec<_> = layers
+        .get_layers(
+            super::ConfigLayerStackOrdering::HighestPrecedenceFirst,
+            /*include_disabled*/ true,
+        )
+        .into_iter()
+        .filter(|layer| matches!(layer.name, super::ConfigLayerSource::Project { .. }))
+        .collect();
+
+    assert_eq!(project_layers.len(), 1);
+    assert_eq!(project_layers[0].disabled_reason, None);
+    assert_eq!(
+        project_layers[0].config.get("model"),
+        Some(&TomlValue::String("gpt-5".to_string()))
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn cli_overrides_with_relative_paths_do_not_break_trust_check() -> std::io::Result<()> {
     let tmp = tempdir()?;
