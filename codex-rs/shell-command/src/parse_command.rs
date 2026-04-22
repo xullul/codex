@@ -2,6 +2,7 @@ use crate::bash::extract_bash_command;
 use crate::bash::try_parse_shell;
 use crate::bash::try_parse_word_only_commands_sequence;
 use crate::powershell::extract_powershell_command;
+use crate::powershell_display::parse_powershell_script;
 use codex_protocol::parse_command::ParsedCommand;
 use shlex::split as shlex_split;
 use shlex::try_join as shlex_try_join;
@@ -1239,8 +1240,9 @@ mod tests {
     fn powershell_command_is_stripped() {
         assert_parsed(
             &vec_str(&["powershell", "-Command", "Get-ChildItem"]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::ListFiles {
                 cmd: "Get-ChildItem".to_string(),
+                path: None,
             }],
         );
     }
@@ -1270,6 +1272,147 @@ mod tests {
             }],
         );
     }
+
+    #[test]
+    fn powershell_get_content_is_read() {
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", "Get-Content src/lib.rs"]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content src/lib.rs".to_string(),
+                name: "lib.rs".to_string(),
+                path: PathBuf::from("src/lib.rs"),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", "gc -LiteralPath .\\Cargo.toml"]),
+            vec![ParsedCommand::Read {
+                cmd: "gc -LiteralPath \".\\\\Cargo.toml\"".to_string(),
+                name: "Cargo.toml".to_string(),
+                path: PathBuf::from(".\\Cargo.toml"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_content_with_select_object_pipe_is_read() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Get-Content tui/src/app.rs | Select-Object -Skip 20 -First 40",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content tui/src/app.rs".to_string(),
+                name: "app.rs".to_string(),
+                path: PathBuf::from("tui/src/app.rs"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_child_item_is_list() {
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", "Get-ChildItem -Path codex-rs -Recurse"]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "Get-ChildItem -Path codex-rs -Recurse".to_string(),
+                path: Some("codex-rs".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Get-ChildItem -Path 'src' -Recurse -Filter '*.rs' | ForEach-Object { $_.FullName }",
+            ]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "Get-ChildItem -Path src -Recurse -Filter '*.rs'".to_string(),
+                path: Some("src".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Get-ChildItem -Path 'src' -Directory | % { $_.FullName }",
+            ]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "Get-ChildItem -Path src -Directory".to_string(),
+                path: Some("src".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_select_string_and_rg_are_search() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Select-String -Path codex-rs -Pattern TODO",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Path codex-rs -Pattern TODO".to_string(),
+                query: Some("TODO".to_string()),
+                path: Some("codex-rs".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", "rg -n TODO codex-rs"]),
+            vec![ParsedCommand::Search {
+                cmd: "rg -n TODO codex-rs".to_string(),
+                query: Some("TODO".to_string()),
+                path: Some("codex-rs".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Select-String -Path 'src/**/*.rs','tests/**/*.rs' -Pattern 'TODO|FIXME' | ForEach-Object { $_.Line }",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Path 'src/**/*.rs,tests/**/*.rs' -Pattern 'TODO|FIXME'"
+                    .to_string(),
+                query: Some("TODO|FIXME".to_string()),
+                path: Some("*.rs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_git_grep_and_cd_context() {
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", "git grep TODO src"]),
+            vec![ParsedCommand::Search {
+                cmd: "git grep TODO src".to_string(),
+                query: Some("TODO".to_string()),
+                path: Some("src".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Set-Location codex-rs; Get-Content Cargo.toml",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content Cargo.toml".to_string(),
+                name: "Cargo.toml".to_string(),
+                path: PathBuf::from("codex-rs/Cargo.toml"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_mutating_commands_fallback_to_unknown() {
+        let script = "Set-Content foo.txt bar";
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", script]),
+            vec![ParsedCommand::Unknown {
+                cmd: script.to_string(),
+            }],
+        );
+    }
 }
 
 pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
@@ -1278,9 +1421,7 @@ pub fn parse_command_impl(command: &[String]) -> Vec<ParsedCommand> {
     }
 
     if let Some((_, script)) = extract_powershell_command(command) {
-        return vec![ParsedCommand::Unknown {
-            cmd: script.to_string(),
-        }];
+        return parse_powershell_script(script);
     }
 
     let normalized = normalize_tokens(command);
