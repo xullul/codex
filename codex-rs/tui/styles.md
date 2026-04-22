@@ -15,6 +15,7 @@
 # Avoid
 
 - Avoid custom colors because there's no guarantee that they'll contrast well or look good in various terminal color themes. (`shimmer.rs` is an exception that works well because we take the default colors and just adjust their levels.)
+- Diff add/delete backgrounds are also an exception: edit blocks may use semantic green/red backgrounds, vetted theme-provided diff backgrounds, and stronger gutters so inserted/deleted lines remain visually obvious. Text rendered over those backgrounds should use the default foreground unless a syntax foreground has strong contrast.
 - Avoid ANSI `black` & `white` as foreground colors because the default terminal theme color will do a better job. (Use `reset` if you need to in order to get those.) The exception is if you need contrast rendering over a manually colored background.
 - Avoid ANSI `blue` and `yellow` because for now the style guide doesn't use them. Prefer a foreground color mentioned above.
 
