@@ -1,10 +1,35 @@
+# Xullul Codex fork
+
+This checkout is Keenu's `codex-xullul` fork, not the official upstream
+`codex` install. When building, installing, documenting, or giving local usage
+instructions for this checkout, use the command name `codex-xullul` so it can
+coexist with any official `codex` command already on the machine.
+
+Local fork installs must not require `just`. Build the binary directly from the
+Cargo workspace:
+
+```powershell
+cd codex-rs
+cargo build -p codex-cli --bin codex --release
+```
+
+On Windows, install the local fork by copying
+`codex-rs\target\release\codex.exe` to
+`%LOCALAPPDATA%\Programs\Xullul\Codex\bin\codex-xullul.exe` and make
+`codex-xullul.cmd` in that same directory delegate to the adjacent
+`codex-xullul.exe`. Keep that directory on `PATH`.
+
+On macOS/Linux, install the local fork by copying
+`codex-rs/target/release/codex` to `$HOME/.local/bin/codex-xullul` and making
+it executable.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
 
 - Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
 - When using format! and you can inline variables into {}, always do that.
-- Install any commands the repo relies on (for example `just`, `rg`, or `cargo-insta`) if they aren't already available before running instructions here.
+- Install any commands the repo relies on for the task (for example `rg` or `cargo-insta`) if they aren't already available before running instructions here. `just` is optional and must not be required for local `codex-xullul` build or install work.
 - Never add or modify any code related to `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` or `CODEX_SANDBOX_ENV_VAR`.
   - You operate in a sandbox where `CODEX_SANDBOX_NETWORK_DISABLED=1` will be set whenever you use the `shell` tool. Any existing code that uses `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` was authored with this fact in mind. It is often used to early exit out of tests that the author knew you would not be able to run given your sandbox limitations.
   - Similarly, when you spawn a process using Seatbelt (`/usr/bin/sandbox-exec`), `CODEX_SANDBOX=seatbelt` will be set on the child process. Integration tests that want to run Seatbelt themselves cannot be run under Seatbelt, so checks for `CODEX_SANDBOX=seatbelt` are also often used to early exit out of tests, as appropriate.
