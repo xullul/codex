@@ -24,7 +24,6 @@ use crate::bottom_pane::multi_select_picker::MultiSelectItem;
 use crate::bottom_pane::multi_select_picker::MultiSelectPicker;
 use crate::bottom_pane::status_surface_preview::StatusSurfacePreviewData;
 use crate::bottom_pane::status_surface_preview::StatusSurfacePreviewItem;
-use crate::busy_indicator::busy_indicator_preview_frame;
 use crate::render::renderable::Renderable;
 
 /// Available items that can be displayed in the terminal title.
@@ -113,7 +112,7 @@ pub(crate) fn preview_line_for_title_items(
         .fold(String::new(), |mut preview, item| {
             if item == TerminalTitleItem::Spinner {
                 preview.push_str(item.separator_from_previous(previous));
-                preview.push_str(busy_indicator_preview_frame());
+                preview.push('⠋');
                 previous = Some(item);
                 return preview;
             }
@@ -300,30 +299,6 @@ mod tests {
                 TerminalTitleItem::AppName,
                 TerminalTitleItem::GitBranch,
             ])
-        );
-    }
-
-    #[test]
-    fn preview_line_uses_busy_indicator_frame_for_spinner() {
-        let preview_data = StatusSurfacePreviewData::from_iter([(
-            StatusSurfacePreviewItem::ProjectName,
-            "codex".to_string(),
-        )]);
-
-        let preview = preview_line_for_title_items(
-            &[TerminalTitleItem::Project, TerminalTitleItem::Spinner],
-            &preview_data,
-        )
-        .expect("preview line");
-
-        let preview_text = preview
-            .spans
-            .into_iter()
-            .map(|span| span.content.into_owned())
-            .collect::<String>();
-        assert_eq!(
-            preview_text,
-            format!("codex {}", busy_indicator_preview_frame())
         );
     }
 }
