@@ -19,7 +19,7 @@ use ratatui::widgets::WidgetRef;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app_event_sender::AppEventSender;
-use crate::exec_cell::spinner;
+use crate::busy_indicator::busy_indicator_span;
 use crate::key_hint;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::renderable::Renderable;
@@ -247,7 +247,11 @@ impl Renderable for StatusIndicatorWidget {
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
 
         let mut spans = Vec::with_capacity(5);
-        spans.push(spinner(Some(self.last_resume_at), self.animations_enabled));
+        spans.push(busy_indicator_span(
+            self.last_resume_at,
+            self.animations_enabled,
+            now,
+        ));
         spans.push(" ".into());
         if self.animations_enabled {
             spans.extend(shimmer_spans(&self.header));

@@ -4,17 +4,12 @@
 //! behavior easier to review without paging through the rest of `chatwidget.rs`.
 
 use super::*;
+use crate::busy_indicator::BUSY_INDICATOR_INTERVAL;
+use crate::busy_indicator::busy_indicator_text_at;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: spinner + project name.
 pub(super) const DEFAULT_TERMINAL_TITLE_ITEMS: [&str; 2] = ["spinner", "project"];
-
-/// Braille-pattern dot-spinner frames for the terminal title animation.
-pub(super) const TERMINAL_TITLE_SPINNER_FRAMES: [&str; 10] =
-    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// Time between spinner frame advances in the terminal title.
-pub(super) const TERMINAL_TITLE_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Compact runtime states that can be rendered into the terminal title.
 ///
@@ -208,7 +203,7 @@ impl ChatWidget {
         if self.last_terminal_title == title {
             if should_animate_spinner {
                 self.frame_requester
-                    .schedule_frame_in(TERMINAL_TITLE_SPINNER_INTERVAL);
+                    .schedule_frame_in(BUSY_INDICATOR_INTERVAL);
             }
             return;
         }
@@ -235,7 +230,7 @@ impl ChatWidget {
 
         if should_animate_spinner {
             self.frame_requester
-                .schedule_frame_in(TERMINAL_TITLE_SPINNER_INTERVAL);
+                .schedule_frame_in(BUSY_INDICATOR_INTERVAL);
         }
     }
 
@@ -612,10 +607,7 @@ impl ChatWidget {
     }
 
     fn terminal_title_spinner_frame_at(&self, now: Instant) -> &'static str {
-        let elapsed = now.saturating_duration_since(self.terminal_title_animation_origin);
-        let frame_index =
-            (elapsed.as_millis() / TERMINAL_TITLE_SPINNER_INTERVAL.as_millis()) as usize;
-        TERMINAL_TITLE_SPINNER_FRAMES[frame_index % TERMINAL_TITLE_SPINNER_FRAMES.len()]
+        busy_indicator_text_at(self.terminal_title_animation_origin, now)
     }
 
     fn terminal_title_uses_spinner(&self) -> bool {
