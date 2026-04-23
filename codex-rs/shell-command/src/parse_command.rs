@@ -1341,8 +1341,45 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_content_line_range_for_loop_with_direct_path_is_read() {
+        let script = "$lines=Get-Content src/effect-query.ts; for ($i = 0; $i -lt $lines.Count; $i++) { '{0}:{1}' -f ($i+1), $lines[$i] }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content src/effect-query.ts".to_string(),
+                name: "effect-query.ts".to_string(),
+                path: PathBuf::from("src/effect-query.ts"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_content_line_range_for_loop_with_variable_path_is_read() {
+        let script = "$lines=Get-Content $PROFILE; for ($i = 0; $i -lt $lines.Count; $i++) { '{0}:{1}' -f ($i+1), $lines[$i] }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content '$PROFILE'".to_string(),
+                name: "$PROFILE".to_string(),
+                path: PathBuf::from("$PROFILE"),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_arbitrary_foreach_stays_unknown() {
         let script = "$p='src\\effect-query.ts'; $lines=Get-Content $p; foreach ($i in 40..80) { Remove-Item $p; '{0}:{1}' -f $i, $lines[$i-1] }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Unknown {
+                cmd: script.to_string(),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_arbitrary_for_loop_stays_unknown() {
+        let script = "$lines=Get-Content src/effect-query.ts; for ($i = 0; $i -lt $lines.Count; $i++) { Remove-Item src/effect-query.ts; '{0}:{1}' -f ($i+1), $lines[$i] }";
         assert_parsed(
             &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
             vec![ParsedCommand::Unknown {
@@ -1416,6 +1453,90 @@ mod tests {
             vec![ParsedCommand::ListFiles {
                 cmd: "Get-ChildItem -Path src -Directory".to_string(),
                 path: Some("src".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Get-ChildItem -Path src -Recurse | Sort-Object FullName | Select-Object -First 5",
+            ]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "Get-ChildItem -Path src -Recurse".to_string(),
+                path: Some("src".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_command_fallback_file_listing_is_list() {
+        let script = "if (Get-Command rg -ErrorAction SilentlyContinue) { rg --files 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator' } else { Get-ChildItem -Recurse -File 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator' | ForEach-Object { $_.FullName } }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::ListFiles {
+                cmd: script.to_string(),
+                path: Some("screen_care_simulator".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_set_location_with_location_echo_and_list_is_list() {
+        let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator'; Get-Location | Select-Object -ExpandProperty Path; Get-ChildItem -Force";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "Get-ChildItem -Force".to_string(),
+                path: Some("screen_care_simulator".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_command_probe_is_search() {
+        let script = "$ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue; if ($ffmpeg) { $ffmpeg.Source } else { 'NO_FFMPEG' }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Search {
+                cmd: script.to_string(),
+                query: Some("ffmpeg".to_string()),
+                path: Some("PATH".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_ffmpeg_frame_probe_is_read_and_list() {
+        let script = "$out='C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames'; New-Item -ItemType Directory -Force -Path $out | Out-Null; ffmpeg -hide_banner -loglevel error -i 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\tweet-video.mp4' -vf \"fps=1/10,scale=480:-1\" \"$out\\frame-%02d.jpg\"; Get-ChildItem $out | Select-Object -ExpandProperty Name";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![
+                ParsedCommand::Read {
+                    cmd: "ffmpeg -i \"C:\\\\Users\\\\Keenu\\\\KeenuProjects\\\\screen_care_simulator\\\\.tmp\\\\tweet-video.mp4\"".to_string(),
+                    name: "tweet-video.mp4".to_string(),
+                    path: PathBuf::from(
+                        "C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\tweet-video.mp4",
+                    ),
+                },
+                ParsedCommand::ListFiles {
+                    cmd: "Get-ChildItem \"C:\\\\Users\\\\Keenu\\\\KeenuProjects\\\\screen_care_simulator\\\\.tmp\\\\frames\"".to_string(),
+                    path: Some("frames".to_string()),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn powershell_ffmpeg_contact_sheet_probe_is_read() {
+        let script = "ffmpeg -hide_banner -loglevel error -pattern_type glob -i 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames\\frame-*.jpg' -filter_complex \"tile=3x2:padding=8:margin=8:color=white\" 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames-contact.jpg'";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "ffmpeg -i \"C:\\\\Users\\\\Keenu\\\\KeenuProjects\\\\screen_care_simulator\\\\.tmp\\\\frames\\\\frame-*.jpg\"".to_string(),
+                name: "frame-*.jpg".to_string(),
+                path: PathBuf::from(
+                    "C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames\\frame-*.jpg",
+                ),
             }],
         );
     }

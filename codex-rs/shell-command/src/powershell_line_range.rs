@@ -6,21 +6,34 @@ use crate::parse_command::shlex_join;
 
 pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand> {
     let statements = split_top_level_statements(script)?;
-    let [path_assignment, lines_assignment, loop_statement] = statements.as_slice() else {
-        return None;
+    let (path_binding, lines_assignment, loop_statement) = match statements.as_slice() {
+        [lines_assignment, loop_statement] => {
+            (None, lines_assignment.as_str(), loop_statement.as_str())
+        }
+        [path_assignment, lines_assignment, loop_statement] => (
+            Some(literal_variable_assignment(path_assignment)?),
+            lines_assignment.as_str(),
+            loop_statement.as_str(),
+        ),
+        _ => return None,
     };
 
-    let (path_var, path) = literal_variable_assignment(path_assignment)?;
-    let (lines_var, read_path_var) = get_content_variable_assignment(lines_assignment)?;
-    if read_path_var != path_var || !is_line_range_preview_loop(loop_statement, &lines_var) {
+    let (lines_var, read_target) = get_content_assignment(lines_assignment)?;
+    if !is_line_range_preview_loop(loop_statement, &lines_var) {
         return None;
     }
+    let path = resolve_read_target(path_binding.as_ref(), read_target);
 
     Some(ParsedCommand::Read {
         cmd: shlex_join(&["Get-Content".to_string(), path.clone()]),
         name: short_display_path(&path),
         path: PathBuf::from(path),
     })
+}
+
+enum ReadTarget {
+    Literal(String),
+    Variable { name: String, display_token: String },
 }
 
 fn split_top_level_statements(script: &str) -> Option<Vec<String>> {
@@ -84,7 +97,7 @@ fn literal_variable_assignment(statement: &str) -> Option<(String, String)> {
     ))
 }
 
-fn get_content_variable_assignment(statement: &str) -> Option<(String, String)> {
+fn get_content_assignment(statement: &str) -> Option<(String, ReadTarget)> {
     let (lhs, rhs) = split_assignment(statement)?;
     let target_var = assignment_name(lhs.trim())?;
     let tokens = split_command_tokens(strip_wrapping_parens(rhs.trim()))?;
@@ -97,7 +110,24 @@ fn get_content_variable_assignment(statement: &str) -> Option<(String, String)> 
     ) {
         return None;
     }
-    Some((target_var, get_content_path_variable(tail)?))
+    Some((target_var, get_content_path_operand(tail)?))
+}
+
+fn resolve_read_target(path_binding: Option<&(String, String)>, read_target: ReadTarget) -> String {
+    match read_target {
+        ReadTarget::Literal(path) => path,
+        ReadTarget::Variable {
+            name,
+            display_token,
+        } => {
+            if let Some((bound_name, bound_path)) = path_binding
+                && bound_name == &name
+            {
+                return bound_path.clone();
+            }
+            display_token
+        }
+    }
 }
 
 fn split_assignment(statement: &str) -> Option<(&str, &str)> {
@@ -221,22 +251,21 @@ fn push_token(tokens: &mut Vec<String>, current: &mut String) {
     }
 }
 
-fn get_content_path_variable(args: &[String]) -> Option<String> {
-    let mut path_var = None;
+fn get_content_path_operand(args: &[String]) -> Option<ReadTarget> {
+    let mut path_target = None;
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
         let lower = arg.to_ascii_lowercase();
-        if let Some(value) = lower
-            .strip_prefix("-path=")
-            .or_else(|| lower.strip_prefix("-literalpath="))
+        if let Some((name, value)) = arg.split_once('=')
+            && matches!(name.to_ascii_lowercase().as_str(), "-path" | "-literalpath")
         {
-            path_var = set_single_path_var(path_var, value)?;
+            path_target = set_single_path_target(path_target, value)?;
             i += 1;
             continue;
         }
         if matches!(lower.as_str(), "-path" | "-literalpath") {
-            path_var = set_single_path_var(path_var, args.get(i + 1)?.as_str())?;
+            path_target = set_single_path_target(path_target, args.get(i + 1)?.as_str())?;
             i += 2;
             continue;
         }
@@ -248,17 +277,42 @@ fn get_content_path_variable(args: &[String]) -> Option<String> {
             i += 1;
             continue;
         }
-        path_var = set_single_path_var(path_var, arg)?;
+        path_target = set_single_path_target(path_target, arg)?;
         i += 1;
     }
-    path_var
+    path_target
 }
 
-fn set_single_path_var(current: Option<String>, value: &str) -> Option<Option<String>> {
+fn set_single_path_target(current: Option<ReadTarget>, value: &str) -> Option<Option<ReadTarget>> {
     if current.is_some() {
         return None;
     }
-    Some(Some(simple_variable_name(value)?))
+    Some(Some(parse_read_target(value)?))
+}
+
+fn parse_read_target(value: &str) -> Option<ReadTarget> {
+    if let Some(path) = powershell_literal(value) {
+        return Some(ReadTarget::Literal(path));
+    }
+    let name = simple_variable_name(value)?;
+    Some(ReadTarget::Variable {
+        name,
+        display_token: variable_display_token(value)?,
+    })
+}
+
+fn variable_display_token(value: &str) -> Option<String> {
+    if let Some(name) = value
+        .strip_prefix("${")
+        .and_then(|token| token.strip_suffix('}'))
+    {
+        normalize_variable_name(name)?;
+        return Some(format!("${name}"));
+    }
+    value
+        .strip_prefix('$')
+        .filter(|name| normalize_variable_name(name).is_some())?;
+    Some(value.to_string())
 }
 
 fn flag_consumes_next_value(flag: &str) -> bool {
@@ -276,7 +330,7 @@ fn flag_consumes_next_value(flag: &str) -> bool {
 }
 
 fn is_line_range_preview_loop(statement: &str, lines_var: &str) -> bool {
-    let Some((loop_var, body)) = parse_line_range_loop(statement) else {
+    let Some((loop_var, body)) = parse_line_range_loop(statement, lines_var) else {
         return false;
     };
     is_line_range_loop_body(&body, &loop_var, lines_var)
@@ -285,12 +339,13 @@ fn is_line_range_preview_loop(statement: &str, lines_var: &str) -> bool {
             .all(|name| name == lines_var || name == loop_var)
 }
 
-fn parse_line_range_loop(statement: &str) -> Option<(String, String)> {
+fn parse_line_range_loop(statement: &str, lines_var: &str) -> Option<(String, String)> {
     parse_keyword_loop(statement, "foreach")
         .and_then(|(header, body)| foreach_range_variable(&header).map(|var| (var, body)))
         .or_else(|| {
-            parse_keyword_loop(statement, "for")
-                .and_then(|(header, body)| for_range_variable(&header).map(|var| (var, body)))
+            parse_keyword_loop(statement, "for").and_then(|(header, body)| {
+                for_range_variable(&header, lines_var).map(|var| (var, body))
+            })
         })
 }
 
@@ -339,8 +394,8 @@ fn foreach_range_variable(header: &str) -> Option<String> {
     (parts.next().is_none() && is_numeric_range(range)).then_some(variable)
 }
 
-fn for_range_variable(header: &str) -> Option<String> {
-    let compact = remove_ascii_whitespace(header);
+fn for_range_variable(header: &str, lines_var: &str) -> Option<String> {
+    let compact = remove_ascii_whitespace(header).to_ascii_lowercase();
     let parts: Vec<&str> = compact.split(';').collect();
     let [initializer, condition, increment] = parts.as_slice() else {
         return None;
@@ -351,13 +406,31 @@ fn for_range_variable(header: &str) -> Option<String> {
         return None;
     }
 
-    let expected_condition_prefix = format!("${variable}-le");
-    let limit = condition.strip_prefix(&expected_condition_prefix)?;
     let expected_increment = format!("${variable}++");
-    (!limit.is_empty()
-        && limit.chars().all(|ch| ch.is_ascii_digit())
-        && *increment == expected_increment)
-        .then_some(variable)
+    (*increment == expected_increment
+        && is_supported_for_condition(condition, &variable, lines_var))
+    .then_some(variable)
+}
+
+fn is_supported_for_condition(condition: &str, loop_var: &str, lines_var: &str) -> bool {
+    [format!("${loop_var}-le"), format!("${loop_var}-lt")]
+        .iter()
+        .any(|prefix| {
+            condition.strip_prefix(prefix).is_some_and(|limit| {
+                is_numeric_literal(limit) || is_count_property_reference(limit, lines_var)
+            })
+        })
+}
+
+fn is_count_property_reference(value: &str, lines_var: &str) -> bool {
+    matches!(
+        value,
+        count if count == format!("${lines_var}.count") || count == format!("${lines_var}.length")
+    )
+}
+
+fn is_numeric_literal(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn is_numeric_range(value: &str) -> bool {
@@ -386,7 +459,7 @@ fn strip_optional_count_guard<'a>(
     }
     let condition_end = matching_delimiter(rest, 0, '(', ')')?;
     let condition = remove_ascii_whitespace(&rest[1..condition_end]).to_ascii_lowercase();
-    if condition != format!("${loop_var}-le${lines_var}.count") {
+    if !is_supported_count_guard(&condition, loop_var, lines_var) {
         return None;
     }
 
@@ -401,6 +474,27 @@ fn strip_optional_count_guard<'a>(
         .then(|| rest[1..body_end].trim())
 }
 
+fn is_supported_count_guard(condition: &str, loop_var: &str, lines_var: &str) -> bool {
+    let count_property = format!("${lines_var}.count");
+    let length_property = format!("${lines_var}.length");
+    let one_based_guards = [
+        format!("${loop_var}-le{count_property}"),
+        format!("${loop_var}-le{length_property}"),
+        format!("(${loop_var}+1)-le{count_property}"),
+        format!("(${loop_var}+1)-le{length_property}"),
+        format!("${loop_var}+1-le{count_property}"),
+        format!("${loop_var}+1-le{length_property}"),
+    ];
+    let zero_based_guards = [
+        format!("${loop_var}-lt{count_property}"),
+        format!("${loop_var}-lt{length_property}"),
+    ];
+    one_based_guards
+        .iter()
+        .chain(zero_based_guards.iter())
+        .any(|guard| condition == guard)
+}
+
 fn is_line_range_format_expression(expression: &str, loop_var: &str, lines_var: &str) -> bool {
     let Some((format, rest)) = parse_string_literal_prefix(expression.trim()) else {
         return false;
@@ -409,7 +503,11 @@ fn is_line_range_format_expression(expression: &str, loop_var: &str, lines_var: 
         return false;
     }
     let rest = remove_ascii_whitespace(rest).to_ascii_lowercase();
-    rest == format!("-f${loop_var},${lines_var}[${loop_var}-1]")
+    [
+        format!("-f${loop_var},${lines_var}[${loop_var}-1]"),
+        format!("-f(${loop_var}+1),${lines_var}[${loop_var}]"),
+        format!("-f${loop_var}+1,${lines_var}[${loop_var}]"),
+    ].contains(&rest)
 }
 
 fn parse_string_literal_prefix(value: &str) -> Option<(String, &str)> {

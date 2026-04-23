@@ -5,6 +5,7 @@ use codex_protocol::parse_command::ParsedCommand;
 
 use crate::parse_command::shlex_join;
 use crate::powershell::UTF8_OUTPUT_PREFIX;
+use crate::powershell_exploration::summarize_known_exploration_script;
 use crate::powershell_line_range::summarize_line_range_preview;
 use crate::powershell_parser::PowershellParseOutcome;
 use crate::powershell_parser::parse_with_powershell_ast;
@@ -20,6 +21,9 @@ pub(crate) fn parse_powershell_script(
 
     if let Some(read) = summarize_line_range_preview(script) {
         return vec![read];
+    }
+    if let Some(command) = summarize_known_exploration_script(script) {
+        return vec![command];
     }
 
     if let Some(executable) = executable
@@ -67,6 +71,9 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
             continue;
         }
         if is_formatting_helper(&head_lower, tail) {
+            continue;
+        }
+        if is_safe_setup_helper(&head_lower, tail) {
             continue;
         }
         if is_mutating_or_ambiguous(&head_lower) {
@@ -153,16 +160,24 @@ fn looks_like_wrapped_command_head(head: &str) -> bool {
             | "sls"
             | "select-object"
             | "select"
+            | "sort-object"
+            | "sort"
             | "measure-object"
             | "measure"
             | "out-string"
             | "format-table"
+            | "get-location"
+            | "pwd"
+            | "out-null"
             | "set-location"
             | "cd"
             | "chdir"
             | "sl"
             | "rg"
             | "git"
+            | "ffmpeg"
+            | "ffmpeg.exe"
+            | "get-command"
             | "foreach-object"
             | "foreach"
             | "%"
@@ -315,6 +330,8 @@ fn summarize_tokens(tokens: &[String]) -> ParsedCommand {
         "select-string" | "sls" => summarize_select_string(tokens, tail),
         "rg" => summarize_rg(tokens, tail),
         "git" => summarize_git(tokens, tail),
+        "ffmpeg" | "ffmpeg.exe" => summarize_ffmpeg(tokens, tail),
+        "get-command" => summarize_get_command(tokens, tail),
         _ => ParsedCommand::Unknown {
             cmd: ps_join(tokens),
         },
@@ -430,6 +447,54 @@ fn summarize_git(tokens: &[String], args: &[String]) -> ParsedCommand {
                 .take(1)
                 .collect(),
             ),
+        },
+        _ => ParsedCommand::Unknown {
+            cmd: ps_join(tokens),
+        },
+    }
+}
+
+fn summarize_ffmpeg(tokens: &[String], args: &[String]) -> ParsedCommand {
+    match ffmpeg_input_path(args) {
+        Some(path) => ParsedCommand::Read {
+            cmd: shlex_join(&["ffmpeg".to_string(), "-i".to_string(), path.clone()]),
+            name: short_display_path(&path),
+            path: PathBuf::from(path),
+        },
+        None => ParsedCommand::Unknown {
+            cmd: ps_join(tokens),
+        },
+    }
+}
+
+fn ffmpeg_input_path(args: &[String]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-i" {
+            return args.get(i + 1).cloned();
+        }
+        if let Some((flag, value)) = arg.split_once('=')
+            && flag == "-i"
+        {
+            return Some(value.to_string());
+        }
+        if ffmpeg_flag_consumes_next_value(arg) {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+fn summarize_get_command(tokens: &[String], args: &[String]) -> ParsedCommand {
+    let operands = positional_operands_skipping(args, &["-erroraction"]);
+    match operands.as_slice() {
+        [tool] => ParsedCommand::Search {
+            cmd: ps_join(tokens),
+            query: Some(tool.clone()),
+            path: Some("PATH".to_string()),
         },
         _ => ParsedCommand::Unknown {
             cmd: ps_join(tokens),
@@ -656,8 +721,55 @@ fn is_set_location(cmd: &str) -> bool {
 fn is_formatting_helper(cmd: &str, args: &[String]) -> bool {
     matches!(
         cmd,
-        "select-object" | "select" | "measure-object" | "measure" | "out-string" | "format-table"
+        "select-object"
+            | "select"
+            | "sort-object"
+            | "sort"
+            | "measure-object"
+            | "measure"
+            | "out-string"
+            | "format-table"
+            | "get-location"
+            | "pwd"
+            | "out-null"
     ) || is_simple_foreach_projection(cmd, args)
+}
+
+fn is_safe_setup_helper(cmd: &str, args: &[String]) -> bool {
+    matches!(cmd, "new-item" | "ni") && is_temp_directory_creation(args)
+}
+
+fn is_temp_directory_creation(args: &[String]) -> bool {
+    let item_type = named_value(args, &["-itemtype", "-type"]);
+    if !item_type.is_some_and(|value| value.eq_ignore_ascii_case("Directory")) {
+        return false;
+    }
+    if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-force")) {
+        return false;
+    }
+    let Some(path) = path_operand(args) else {
+        return false;
+    };
+    let normalized = path.replace('/', "\\").to_ascii_lowercase();
+    normalized.contains("\\.tmp\\") || normalized.ends_with("\\.tmp")
+}
+
+fn ffmpeg_flag_consumes_next_value(flag: &str) -> bool {
+    matches!(
+        flag.to_ascii_lowercase().as_str(),
+        "-filter"
+            | "-filter_complex"
+            | "-loglevel"
+            | "-map"
+            | "-pattern_type"
+            | "-r"
+            | "-s"
+            | "-ss"
+            | "-t"
+            | "-vf"
+            | "-vframes"
+            | "-frames:v"
+    )
 }
 
 fn is_simple_foreach_projection(cmd: &str, args: &[String]) -> bool {
