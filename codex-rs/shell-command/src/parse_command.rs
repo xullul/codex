@@ -1532,6 +1532,35 @@ mod tests {
     }
 
     #[test]
+    fn powershell_command_result_variables_keep_semantic_action() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "$items = Get-ChildItem -Path src -Recurse; $items | Select-Object -First 5 -ExpandProperty FullName",
+            ]),
+            vec![ParsedCommand::ListFiles {
+                cmd: "Get-ChildItem -Path src -Recurse".to_string(),
+                path: Some("src".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "$matches=Select-String -Path src/lib.rs -Pattern TODO; $matches | Select-Object LineNumber,Line",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Path src/lib.rs -Pattern TODO".to_string(),
+                query: Some("TODO".to_string()),
+                path: Some("lib.rs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_command_fallback_file_listing_is_list() {
         let script = "if (Get-Command rg -ErrorAction SilentlyContinue) { rg --files 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator' } else { Get-ChildItem -Recurse -File 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator' | ForEach-Object { $_.FullName } }";
         assert_parsed(

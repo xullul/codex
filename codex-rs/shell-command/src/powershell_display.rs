@@ -46,11 +46,18 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
     let mut cwd: Option<String> = None;
     let mut prior_list_path: Option<String> = None;
     let mut variables: HashMap<String, String> = HashMap::new();
+    let mut command_result_variables: HashMap<String, ParsedCommand> = HashMap::new();
     let mut pending_wrapping_closes = 0;
 
     for raw_tokens in parts {
         let tokens = normalize_part_tokens(raw_tokens, &variables, &mut pending_wrapping_closes);
         if tokens.is_empty() {
+            continue;
+        }
+        if let Some((name, parsed)) = command_result_assignment(&tokens) {
+            let parsed = apply_context_to_parsed(parsed, cwd.as_deref(), &mut prior_list_path);
+            command_result_variables.insert(name, parsed.clone());
+            out.push(parsed);
             continue;
         }
         if let Some((name, value)) = simple_variable_assignment(&tokens) {
@@ -62,6 +69,11 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
             continue;
         };
         let head_lower = head.to_ascii_lowercase();
+        if simple_variable_name(head)
+            .is_some_and(|name| command_result_variables.contains_key(&name))
+        {
+            continue;
+        }
         if is_set_location(&head_lower) {
             if let Some(path) = path_operand(tail) {
                 cwd = Some(match cwd.as_deref() {
@@ -86,28 +98,10 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
         }
 
         let parsed = summarize_tokens(&tokens);
-        let parsed = match parsed {
-            ParsedCommand::Read { cmd, name, path } => {
-                let path = apply_cwd_to_path(cwd.as_deref(), path);
-                prior_list_path = None;
-                ParsedCommand::Read { cmd, name, path }
-            }
-            ParsedCommand::ListFiles { cmd, path } => {
-                let path = path.or_else(|| cwd.as_deref().map(short_display_path));
-                prior_list_path = path.clone();
-                ParsedCommand::ListFiles { cmd, path }
-            }
-            ParsedCommand::Search { cmd, query, path } => {
-                let path = path.or_else(|| prior_list_path.clone());
-                prior_list_path = None;
-                ParsedCommand::Search { cmd, query, path }
-            }
-            ParsedCommand::Action { cmd, kind, detail } => {
-                prior_list_path = None;
-                ParsedCommand::Action { cmd, kind, detail }
-            }
-            ParsedCommand::Unknown { .. } => return vec![unknown(script)],
-        };
+        let parsed = apply_context_to_parsed(parsed, cwd.as_deref(), &mut prior_list_path);
+        if matches!(parsed, ParsedCommand::Unknown { .. }) {
+            return vec![unknown(script)];
+        }
         out.push(parsed);
     }
 
@@ -116,6 +110,35 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
     }
 
     simplify_powershell_commands(out)
+}
+
+fn apply_context_to_parsed(
+    parsed: ParsedCommand,
+    cwd: Option<&str>,
+    prior_list_path: &mut Option<String>,
+) -> ParsedCommand {
+    match parsed {
+        ParsedCommand::Read { cmd, name, path } => {
+            let path = apply_cwd_to_path(cwd, path);
+            *prior_list_path = None;
+            ParsedCommand::Read { cmd, name, path }
+        }
+        ParsedCommand::ListFiles { cmd, path } => {
+            let path = path.or_else(|| cwd.map(short_display_path));
+            *prior_list_path = path.clone();
+            ParsedCommand::ListFiles { cmd, path }
+        }
+        ParsedCommand::Search { cmd, query, path } => {
+            let path = path.or_else(|| prior_list_path.clone());
+            *prior_list_path = None;
+            ParsedCommand::Search { cmd, query, path }
+        }
+        ParsedCommand::Action { cmd, kind, detail } => {
+            *prior_list_path = None;
+            ParsedCommand::Action { cmd, kind, detail }
+        }
+        ParsedCommand::Unknown { cmd } => ParsedCommand::Unknown { cmd },
+    }
 }
 
 fn normalize_part_tokens(
@@ -620,6 +643,34 @@ fn simple_variable_assignment(tokens: &[String]) -> Option<(String, String)> {
     match tokens {
         [token] => assignment_parts(token),
         [lhs, eq, rhs] if eq == "=" => assignment_name(lhs).map(|name| (name, rhs.to_string())),
+        _ => None,
+    }
+}
+
+fn command_result_assignment(tokens: &[String]) -> Option<(String, ParsedCommand)> {
+    let (name, rhs) = assignment_command_tokens(tokens)?;
+    let parsed = summarize_tokens(&rhs);
+    if matches!(parsed, ParsedCommand::Unknown { .. }) {
+        return None;
+    }
+    Some((name, parsed))
+}
+
+fn assignment_command_tokens(tokens: &[String]) -> Option<(String, Vec<String>)> {
+    match tokens {
+        [lhs, eq, rhs @ ..] if eq == "=" && !rhs.is_empty() => {
+            assignment_name(lhs).map(|name| (name, rhs.to_vec()))
+        }
+        [first, tail @ ..] => {
+            let (lhs, rhs_head) = first.split_once('=')?;
+            if rhs_head.is_empty() {
+                return None;
+            }
+            let mut rhs = Vec::with_capacity(tail.len() + 1);
+            rhs.push(rhs_head.to_string());
+            rhs.extend_from_slice(tail);
+            assignment_name(lhs).map(|name| (name, rhs))
+        }
         _ => None,
     }
 }

@@ -49,9 +49,8 @@ pub(crate) fn action_from_script(script: &str) -> Option<ParsedCommand> {
     let lower = first_line.to_ascii_lowercase();
     let kind = if is_obvious_edit_script(&lower_script) {
         ParsedCommandActionKind::Edit
-    } else if !is_single_simple_script(script, first_line) {
-        return None;
-    } else if lower.contains("where-object")
+    } else if !is_single_simple_script(script, first_line)
+        || lower.contains("where-object")
         || lower.contains("foreach-object")
         || lower.contains("| ?")
         || lower.contains("| %")

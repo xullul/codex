@@ -1148,6 +1148,64 @@ async fn powershell_exec_renders_semantic_variable_path_read_and_keeps_raw_trans
 }
 
 #[tokio::test]
+async fn powershell_exec_renders_semantic_command_result_variable_and_keeps_raw_transcript() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let raw_cmd = "$items = Get-ChildItem -Path src -Recurse; $items | Select-Object -First 5 -ExpandProperty FullName";
+    let command = vec![
+        "powershell.exe".to_string(),
+        "-NoProfile".to_string(),
+        "-Command".to_string(),
+        raw_cmd.to_string(),
+    ];
+    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let begin = ExecCommandBeginEvent {
+        call_id: "powershell-command-result-variable".to_string(),
+        process_id: None,
+        turn_id: "turn-1".to_string(),
+        command,
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        parsed_cmd,
+        source: ExecCommandSource::Agent,
+        interaction_input: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "powershell-command-result-variable-begin".to_string(),
+        msg: EventMsg::ExecCommandBegin(begin.clone()),
+    });
+
+    let active = active_blob(&chat);
+    assert!(
+        !active.contains("$items"),
+        "expected semantic summary instead of raw variable pipeline, got {active}"
+    );
+    assert!(
+        !active.contains("Select-Object"),
+        "expected semantic summary instead of raw projection, got {active}"
+    );
+    assert!(
+        active.contains("List src"),
+        "expected semantic list detail, got {active}"
+    );
+    assert_chatwidget_snapshot!("powershell_semantic_command_result_variable_active", active);
+
+    let transcript = lines_to_single_string(
+        &chat
+            .active_cell
+            .as_ref()
+            .expect("active cell")
+            .transcript_lines(/*width*/ 80),
+    );
+    let normalized_transcript = transcript.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized_transcript.contains(raw_cmd),
+        "expected transcript to keep raw command-result variable pipeline, got {transcript}"
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+}
+
+#[tokio::test]
 async fn powershell_exec_renders_semantic_ffmpeg_probe_and_keeps_raw_transcript() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let raw_cmd = "$out='C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames'; New-Item -ItemType Directory -Force -Path $out | Out-Null; ffmpeg -hide_banner -loglevel error -i 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\tweet-video.mp4' -vf \"fps=1/10,scale=480:-1\" \"$out\\frame-%02d.jpg\"; Get-ChildItem $out | Select-Object -ExpandProperty Name";
