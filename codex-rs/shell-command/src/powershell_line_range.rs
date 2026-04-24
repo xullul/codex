@@ -3,9 +3,23 @@ use std::path::PathBuf;
 use codex_protocol::parse_command::ParsedCommand;
 
 use crate::parse_command::shlex_join;
+use crate::powershell_syntax::matching_delimiter;
+use crate::powershell_syntax::powershell_literal as quoted_powershell_literal;
+use crate::powershell_syntax::simple_variable_name;
+use crate::powershell_syntax::split_command_tokens;
+use crate::powershell_syntax::split_top_level_statements;
+use crate::powershell_syntax::strip_case_insensitive_keyword;
+use crate::powershell_syntax::strip_wrapping_parens;
 
 pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand> {
-    let statements = split_top_level_statements(script)?;
+    let mut statements = split_top_level_statements(script)?;
+    let cwd = statements
+        .first()
+        .and_then(|statement| set_location_target(statement));
+    if cwd.is_some() {
+        statements.remove(0);
+    }
+
     let (path_binding, lines_assignment, loop_statement) = match statements.as_slice() {
         [lines_assignment, loop_statement] => {
             (None, lines_assignment.as_str(), loop_statement.as_str())
@@ -22,7 +36,10 @@ pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand
     if !is_line_range_preview_loop(loop_statement, &lines_var) {
         return None;
     }
-    let path = resolve_read_target(path_binding.as_ref(), read_target);
+    let path = apply_cwd_to_path(
+        cwd.as_deref(),
+        &resolve_read_target(path_binding.as_ref(), read_target),
+    );
 
     Some(ParsedCommand::Read {
         cmd: shlex_join(&["Get-Content".to_string(), path.clone()]),
@@ -36,57 +53,61 @@ enum ReadTarget {
     Variable { name: String, display_token: String },
 }
 
-fn split_top_level_statements(script: &str) -> Option<Vec<String>> {
-    let mut statements = Vec::new();
-    let mut start = 0;
-    let mut paren_depth = 0usize;
-    let mut brace_depth = 0usize;
-    let mut bracket_depth = 0usize;
-    let mut quote: Option<char> = None;
-    let mut chars = script.char_indices().peekable();
-
-    while let Some((idx, ch)) = chars.next() {
-        if let Some(q) = quote {
-            if ch == '`' {
-                chars.next();
-            } else if ch == q {
-                if q == '\'' && chars.peek().is_some_and(|(_, next)| *next == '\'') {
-                    chars.next();
-                } else {
-                    quote = None;
-                }
-            }
-            continue;
-        }
-
-        match ch {
-            '\'' | '"' => quote = Some(ch),
-            '(' => paren_depth += 1,
-            ')' => paren_depth = paren_depth.checked_sub(1)?,
-            '{' => brace_depth += 1,
-            '}' => brace_depth = brace_depth.checked_sub(1)?,
-            '[' => bracket_depth += 1,
-            ']' => bracket_depth = bracket_depth.checked_sub(1)?,
-            ';' if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 => {
-                push_statement(script, start, idx, &mut statements);
-                start = idx + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-
-    if quote.is_some() || paren_depth != 0 || brace_depth != 0 || bracket_depth != 0 {
+fn set_location_target(statement: &str) -> Option<String> {
+    let tokens = split_command_tokens(strip_wrapping_parens(statement.trim()))?;
+    let [head, tail @ ..] = tokens.as_slice() else {
+        return None;
+    };
+    if !matches!(
+        head.to_ascii_lowercase().as_str(),
+        "set-location" | "cd" | "chdir" | "sl"
+    ) {
         return None;
     }
-    push_statement(script, start, script.len(), &mut statements);
-    Some(statements)
+    location_path_operand(tail)
 }
 
-fn push_statement(script: &str, start: usize, end: usize, statements: &mut Vec<String>) {
-    let statement = script[start..end].trim();
-    if !statement.is_empty() {
-        statements.push(statement.to_string());
+fn location_path_operand(args: &[String]) -> Option<String> {
+    let mut path = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        let lower = arg.to_ascii_lowercase();
+        if let Some((name, value)) = arg.split_once('=')
+            && matches!(name.to_ascii_lowercase().as_str(), "-path" | "-literalpath")
+        {
+            path = set_single_literal_path(path, value)?;
+            i += 1;
+            continue;
+        }
+        if matches!(lower.as_str(), "-path" | "-literalpath") {
+            path = set_single_literal_path(path, args.get(i + 1)?.as_str())?;
+            i += 2;
+            continue;
+        }
+        if location_flag_consumes_next_value(&lower) {
+            i += 2;
+            continue;
+        }
+        if arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        path = set_single_literal_path(path, arg)?;
+        i += 1;
     }
+    path
+}
+
+fn set_single_literal_path(current: Option<String>, value: &str) -> Option<Option<String>> {
+    if current.is_some() {
+        return None;
+    }
+    Some(Some(powershell_literal(value)?))
+}
+
+fn location_flag_consumes_next_value(flag: &str) -> bool {
+    matches!(flag, "-stackname")
 }
 
 fn literal_variable_assignment(statement: &str) -> Option<(String, String)> {
@@ -159,29 +180,8 @@ fn split_assignment(statement: &str) -> Option<(&str, &str)> {
 }
 
 fn powershell_literal(value: &str) -> Option<String> {
-    if let Some(inner) = value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
-        return Some(inner.replace("''", "'"));
-    }
-    if let Some(inner) = value.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-        return unescape_double_quoted_literal(inner);
-    }
-    is_plain_path_literal(value).then(|| value.to_string())
-}
-
-fn unescape_double_quoted_literal(value: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut chars = value.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '$' {
-            return None;
-        }
-        if ch == '`' {
-            out.push(chars.next()?);
-        } else {
-            out.push(ch);
-        }
-    }
-    Some(out)
+    quoted_powershell_literal(value)
+        .or_else(|| is_plain_path_literal(value).then(|| value.to_string()))
 }
 
 fn is_plain_path_literal(value: &str) -> bool {
@@ -193,62 +193,6 @@ fn is_plain_path_literal(value: &str) -> bool {
                     '$' | ';' | '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | '[' | ']'
                 )
         })
-}
-
-fn strip_wrapping_parens(value: &str) -> &str {
-    let trimmed = value.trim();
-    if trimmed.starts_with('(')
-        && matching_delimiter(trimmed, 0, '(', ')')
-            .is_some_and(|idx| idx + ')'.len_utf8() == trimmed.len())
-    {
-        trimmed[1..trimmed.len() - 1].trim()
-    } else {
-        trimmed
-    }
-}
-
-fn split_command_tokens(command: &str) -> Option<Vec<String>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote: Option<char> = None;
-    let mut chars = command.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if let Some(q) = quote {
-            if ch == '`' {
-                current.push(chars.next()?);
-            } else if ch == q {
-                if q == '\'' && chars.peek().is_some_and(|next| *next == '\'') {
-                    chars.next();
-                    current.push('\'');
-                } else {
-                    quote = None;
-                }
-            } else {
-                current.push(ch);
-            }
-            continue;
-        }
-
-        match ch {
-            '\'' | '"' => quote = Some(ch),
-            ch if ch.is_ascii_whitespace() => push_token(&mut tokens, &mut current),
-            '|' | ';' | '&' | '<' | '>' | '{' | '}' => return None,
-            _ => current.push(ch),
-        }
-    }
-
-    if quote.is_some() {
-        return None;
-    }
-    push_token(&mut tokens, &mut current);
-    Some(tokens)
-}
-
-fn push_token(tokens: &mut Vec<String>, current: &mut String) {
-    if !current.is_empty() {
-        tokens.push(std::mem::take(current));
-    }
 }
 
 fn get_content_path_operand(args: &[String]) -> Option<ReadTarget> {
@@ -330,6 +274,13 @@ fn flag_consumes_next_value(flag: &str) -> bool {
 }
 
 fn is_line_range_preview_loop(statement: &str, lines_var: &str) -> bool {
+    if let Some((loop_var, range_var, body)) = parse_multi_range_loop(statement, lines_var) {
+        return is_line_range_loop_body(&body, &loop_var, lines_var)
+            && variable_references(statement)
+                .into_iter()
+                .all(|name| name == lines_var || name == loop_var || name == range_var);
+    }
+
     let Some((loop_var, body)) = parse_line_range_loop(statement, lines_var) else {
         return false;
     };
@@ -347,6 +298,14 @@ fn parse_line_range_loop(statement: &str, lines_var: &str) -> Option<(String, St
                 for_range_variable(&header, lines_var).map(|var| (var, body))
             })
         })
+}
+
+fn parse_multi_range_loop(statement: &str, lines_var: &str) -> Option<(String, String, String)> {
+    let (header, body) = parse_keyword_loop(statement, "foreach")?;
+    let range_var = foreach_tuple_ranges_variable(&header)?;
+    let (loop_var, inner_body) = parse_keyword_loop(&body, "for")?;
+    let loop_var = for_range_variable_with_indexed_bounds(&loop_var, &range_var, lines_var)?;
+    Some((loop_var, range_var, inner_body))
 }
 
 fn parse_keyword_loop(statement: &str, keyword: &str) -> Option<(String, String)> {
@@ -368,22 +327,6 @@ fn parse_keyword_loop(statement: &str, keyword: &str) -> Option<(String, String)
         .then(|| (header, rest[1..body_end].trim().to_string()))
 }
 
-fn strip_case_insensitive_keyword<'a>(value: &'a str, keyword: &str) -> Option<&'a str> {
-    let prefix = value.get(..keyword.len())?;
-    if !prefix.eq_ignore_ascii_case(keyword) {
-        return None;
-    }
-    let rest = &value[keyword.len()..];
-    if rest
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return None;
-    }
-    Some(rest)
-}
-
 fn foreach_range_variable(header: &str) -> Option<String> {
     let mut parts = header.split_whitespace();
     let variable = parts.next().and_then(simple_variable_name)?;
@@ -392,6 +335,36 @@ fn foreach_range_variable(header: &str) -> Option<String> {
     }
     let range = parts.next()?;
     (parts.next().is_none() && is_numeric_range(range)).then_some(variable)
+}
+
+fn foreach_tuple_ranges_variable(header: &str) -> Option<String> {
+    let compact = remove_ascii_whitespace(header).to_ascii_lowercase();
+    let (lhs, ranges) = compact.split_once("in")?;
+    let variable = simple_variable_name(lhs)?;
+    if !ranges.starts_with("@(") || !ranges.ends_with(')') {
+        return None;
+    }
+    let mut rest = &ranges[2..ranges.len() - 1];
+    if rest.is_empty() {
+        return None;
+    }
+    while !rest.is_empty() {
+        if !rest.starts_with("@(") {
+            return None;
+        }
+        let close = matching_delimiter(rest, 1, '(', ')')?;
+        let tuple = &rest[2..close];
+        let (start, end) = tuple.split_once(',')?;
+        if !is_numeric_literal(start) || !is_numeric_literal(end) {
+            return None;
+        }
+        rest = &rest[close + 1..];
+        if rest.is_empty() {
+            break;
+        }
+        rest = rest.strip_prefix(',')?;
+    }
+    Some(variable)
 }
 
 fn for_range_variable(header: &str, lines_var: &str) -> Option<String> {
@@ -409,6 +382,31 @@ fn for_range_variable(header: &str, lines_var: &str) -> Option<String> {
     let expected_increment = format!("${variable}++");
     (*increment == expected_increment
         && is_supported_for_condition(condition, &variable, lines_var))
+    .then_some(variable)
+}
+
+fn for_range_variable_with_indexed_bounds(
+    header: &str,
+    range_var: &str,
+    lines_var: &str,
+) -> Option<String> {
+    let compact = remove_ascii_whitespace(header).to_ascii_lowercase();
+    let parts: Vec<&str> = compact.split(';').collect();
+    let [initializer, condition, increment] = parts.as_slice() else {
+        return None;
+    };
+    let (lhs, start) = initializer.split_once('=')?;
+    let variable = simple_variable_name(lhs)?;
+    if start != format!("${range_var}[0]") {
+        return None;
+    }
+
+    let expected_increment = format!("${variable}++");
+    if *increment != expected_increment {
+        return None;
+    }
+    (is_supported_for_condition(condition, &variable, lines_var)
+        || *condition == format!("${variable}-le${range_var}[1]"))
     .then_some(variable)
 }
 
@@ -499,7 +497,7 @@ fn is_line_range_format_expression(expression: &str, loop_var: &str, lines_var: 
     let Some((format, rest)) = parse_string_literal_prefix(expression.trim()) else {
         return false;
     };
-    if !(format.contains("{0}") && format.contains("{1}")) {
+    if !format_has_line_number_and_text_placeholders(&format) {
         return false;
     }
     let rest = remove_ascii_whitespace(rest).to_ascii_lowercase();
@@ -509,6 +507,12 @@ fn is_line_range_format_expression(expression: &str, loop_var: &str, lines_var: 
         format!("-f${loop_var}+1,${lines_var}[${loop_var}]"),
     ]
     .contains(&rest)
+}
+
+fn format_has_line_number_and_text_placeholders(format: &str) -> bool {
+    [("{0}", "{1}"), ("{0,", "{1}")]
+        .into_iter()
+        .any(|(line, text)| format.contains(line) && format.contains(text))
 }
 
 fn parse_string_literal_prefix(value: &str) -> Option<(String, &str)> {
@@ -589,57 +593,8 @@ fn variable_reference_at(value: &str, dollar_idx: usize) -> Option<String> {
     (len > 0).then(|| normalize_variable_name(&after[..len]))?
 }
 
-fn matching_delimiter(value: &str, open_idx: usize, open: char, close: char) -> Option<usize> {
-    if !value[open_idx..].starts_with(open) {
-        return None;
-    }
-
-    let mut depth = 0usize;
-    let mut quote: Option<char> = None;
-    let mut chars = value[open_idx..].char_indices().peekable();
-    while let Some((relative_idx, ch)) = chars.next() {
-        let idx = open_idx + relative_idx;
-        if let Some(q) = quote {
-            if ch == '`' {
-                chars.next();
-            } else if ch == q {
-                if q == '\'' && chars.peek().is_some_and(|(_, next)| *next == '\'') {
-                    chars.next();
-                } else {
-                    quote = None;
-                }
-            }
-            continue;
-        }
-
-        match ch {
-            '\'' | '"' => quote = Some(ch),
-            ch if ch == open => depth += 1,
-            ch if ch == close => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(idx);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
 fn assignment_name(token: &str) -> Option<String> {
     simple_variable_name(token)
-}
-
-fn simple_variable_name(token: &str) -> Option<String> {
-    if let Some(name) = token
-        .strip_prefix("${")
-        .and_then(|value| value.strip_suffix('}'))
-    {
-        return normalize_variable_name(name);
-    }
-    normalize_variable_name(token.strip_prefix('$')?)
 }
 
 fn normalize_variable_name(name: &str) -> Option<String> {
@@ -674,4 +629,27 @@ fn short_display_path(path: &str) -> String {
         .next()
         .map(str::to_string)
         .unwrap_or_else(|| trimmed.to_string())
+}
+
+fn apply_cwd_to_path(cwd: Option<&str>, path: &str) -> String {
+    let Some(cwd) = cwd else {
+        return path.to_string();
+    };
+    if is_abs_like(path) {
+        return path.to_string();
+    }
+    let mut buf = PathBuf::from(cwd);
+    buf.push(path);
+    buf.to_string_lossy().to_string()
+}
+
+fn is_abs_like(path: &str) -> bool {
+    if std::path::Path::new(path).is_absolute() {
+        return true;
+    }
+    let mut chars = path.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(d), Some(':'), Some('\\' | '/')) if d.is_ascii_alphabetic()
+    ) || path.starts_with("\\\\")
 }

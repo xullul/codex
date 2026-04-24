@@ -955,7 +955,12 @@ fn is_simple_foreach_projection(cmd: &str, args: &[String]) -> bool {
                 && close == "}"
                 && matches!(
                     expr.as_str(),
-                    "$_.fullname" | "$_.full_name" | "$_.name" | "$_.path" | "$_.line"
+                    "$_.fullname"
+                        | "$_.full_name"
+                        | "$_.name"
+                        | "$_.path"
+                        | "$_.line"
+                        | "$_.tostring()"
                 )
     )
 }

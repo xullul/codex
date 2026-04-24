@@ -1400,6 +1400,42 @@ mod tests {
     }
 
     #[test]
+    fn powershell_line_range_after_set_location_is_read() {
+        let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $p='src/engine/__tests__/duel.e2e.test.ts'; $lines=Get-Content -LiteralPath $p; for($i=3260;$i -le 3350;$i++){ if($i -le $lines.Length){ '{0,5}: {1}' -f $i,$lines[$i-1] }}";
+        let expected_path = PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra")
+            .join("src/engine/__tests__/duel.e2e.test.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "duel.e2e.test.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_multi_range_line_preview_after_set_location_is_read() {
+        let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $p='src/engine/duel.ts'; $lines=Get-Content -LiteralPath $p; foreach($range in @(@(3280,3385),@(3390,3530),@(3528,3635))) { for($i=$range[0];$i -le $range[1];$i++){ if($i -le $lines.Length){ '{0,5}: {1}' -f $i,$lines[$i-1] }} }";
+        let expected_path =
+            PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra").join("src/engine/duel.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "duel.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_content_line_range_for_loop_with_direct_path_is_read() {
         let script = "$lines=Get-Content src/effect-query.ts; for ($i = 0; $i -lt $lines.Count; $i++) { '{0}:{1}' -f ($i+1), $lines[$i] }";
         assert_parsed(
@@ -1483,6 +1519,19 @@ mod tests {
                     .to_string(),
                 query: Some("Entity<Asset>|e => e.AssetTag".to_string()),
                 path: Some("EticketContext.cs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_select_string_with_tostring_projection_is_search() {
+        let script = "Select-String -Path 'C:\\Windows\\Logs\\CBS\\CBS.log' -Pattern 'Summary:|Clipc.dll|RestoreHealth' -Context 0,2 -ErrorAction SilentlyContinue | Select-Object -Last 80 | ForEach-Object { $_.ToString() }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Path \"C:\\\\Windows\\\\Logs\\\\CBS\\\\CBS.log\" -Pattern 'Summary:|Clipc.dll|RestoreHealth' -Context '0,2' -ErrorAction SilentlyContinue".to_string(),
+                query: Some("Summary:|Clipc.dll|RestoreHealth".to_string()),
+                path: Some("CBS.log".to_string()),
             }],
         );
     }
