@@ -1668,7 +1668,7 @@ mod tests {
         let expected_multiline =
             highlight_code_to_styled_spans("    let s = \"hello\nworld\";\n", "rust")
                 .expect("rust highlighting");
-        let expected_style = expected_multiline
+        let expected_syntax_style = expected_multiline
             .get(1)
             .and_then(|line| {
                 line.iter()
@@ -1676,6 +1676,12 @@ mod tests {
             })
             .map(|span| span.style)
             .expect("expected highlighted span for second multiline string line");
+        let style_context = current_diff_render_style_context();
+        let expected_style = style_syntax_for_diff(
+            DiffLineType::Insert,
+            expected_syntax_style,
+            style_line_bg_for(DiffLineType::Insert, style_context.diff_backgrounds),
+        );
 
         let lines = create_diff_summary(&changes, &PathBuf::from("/"), /*wrap_cols*/ 120);
         let actual_style = lines
