@@ -65,6 +65,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::ReadOnlyAccess;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_tools::ExplorationSubagentsPolicy;
 use serde::Deserialize;
 use tempfile::tempdir;
 
@@ -7033,6 +7034,7 @@ enabled = true
 usage_hint_enabled = false
 usage_hint_text = "Custom delegation guidance."
 hide_spawn_agent_metadata = true
+exploration_subagents = "less"
 "#,
     )?;
 
@@ -7049,6 +7051,34 @@ hide_spawn_agent_metadata = true
         Some("Custom delegation guidance.")
     );
     assert!(config.multi_agent_v2.hide_spawn_agent_metadata);
+    assert_eq!(
+        config.multi_agent_v2.exploration_subagents_policy,
+        ExplorationSubagentsPolicy::Less
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn multi_agent_v2_config_defaults_exploration_subagents_to_auto() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features.multi_agent_v2]
+enabled = true
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.multi_agent_v2.exploration_subagents_policy,
+        ExplorationSubagentsPolicy::Auto
+    );
 
     Ok(())
 }
@@ -7064,11 +7094,13 @@ async fn profile_multi_agent_v2_config_overrides_base() -> std::io::Result<()> {
 usage_hint_enabled = true
 usage_hint_text = "base hint"
 hide_spawn_agent_metadata = true
+exploration_subagents = "prefer"
 
 [profiles.no_hint.features.multi_agent_v2]
 usage_hint_enabled = false
 usage_hint_text = "profile hint"
 hide_spawn_agent_metadata = false
+exploration_subagents = "disable"
 "#,
     )?;
 
@@ -7084,6 +7116,10 @@ hide_spawn_agent_metadata = false
         Some("profile hint")
     );
     assert!(!config.multi_agent_v2.hide_spawn_agent_metadata);
+    assert_eq!(
+        config.multi_agent_v2.exploration_subagents_policy,
+        ExplorationSubagentsPolicy::Disable
+    );
 
     Ok(())
 }

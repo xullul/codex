@@ -86,6 +86,7 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_tools::ExplorationSubagentsPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
@@ -625,6 +626,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiAgentV2Config {
+    pub exploration_subagents_policy: ExplorationSubagentsPolicy,
     pub usage_hint_enabled: bool,
     pub usage_hint_text: Option<String>,
     pub hide_spawn_agent_metadata: bool,
@@ -633,6 +635,7 @@ pub struct MultiAgentV2Config {
 impl Default for MultiAgentV2Config {
     fn default() -> Self {
         Self {
+            exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
             usage_hint_enabled: true,
             usage_hint_text: None,
             hide_spawn_agent_metadata: false,
@@ -1494,8 +1497,14 @@ fn resolve_multi_agent_v2_config(
         .and_then(|config| config.hide_spawn_agent_metadata)
         .or_else(|| base.and_then(|config| config.hide_spawn_agent_metadata))
         .unwrap_or(default.hide_spawn_agent_metadata);
+    let exploration_subagents_policy = profile
+        .and_then(|config| config.exploration_subagents)
+        .or_else(|| base.and_then(|config| config.exploration_subagents))
+        .map(ExplorationSubagentsPolicy::from)
+        .unwrap_or(default.exploration_subagents_policy);
 
     MultiAgentV2Config {
+        exploration_subagents_policy,
         usage_hint_enabled,
         usage_hint_text,
         hide_spawn_agent_metadata,

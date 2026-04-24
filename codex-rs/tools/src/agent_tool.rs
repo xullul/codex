@@ -1,6 +1,7 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
+use crate::tool_config::ExplorationSubagentsPolicy;
 use codex_protocol::openai_models::ModelPreset;
 use serde_json::Value;
 use serde_json::json;
@@ -16,6 +17,7 @@ pub struct SpawnAgentToolOptions<'a> {
     pub hide_agent_type_model_reasoning: bool,
     pub include_usage_hint: bool,
     pub usage_hint_text: Option<String>,
+    pub exploration_subagents_policy: ExplorationSubagentsPolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub fn create_spawn_agent_tool_v1(options: SpawnAgentToolOptions<'_>) -> ToolSpe
             return_value_description,
             options.include_usage_hint,
             options.usage_hint_text,
+            options.exploration_subagents_policy,
         ),
         strict: false,
         defer_loading: None,
@@ -71,6 +74,7 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions<'_>) -> ToolSpe
             available_models_description.as_deref(),
             options.include_usage_hint,
             options.usage_hint_text,
+            options.exploration_subagents_policy,
         ),
         strict: false,
         defer_loading: None,
@@ -587,6 +591,7 @@ fn spawn_agent_tool_description(
     return_value_description: &str,
     include_usage_hint: bool,
     usage_hint_text: Option<String>,
+    exploration_subagents_policy: ExplorationSubagentsPolicy,
 ) -> String {
     let agent_role_guidance = available_models_description.unwrap_or_default();
 
@@ -611,14 +616,16 @@ fn spawn_agent_tool_description(
             "Agent-role guidance below only helps choose which agent to use after spawning is already authorized; it never authorizes spawning by itself."
         })
         .unwrap_or_default();
+    let exploration_subagents_guidance = exploration_subagents_policy.usage_guidance();
     format!(
         r#"
         {tool_description}
 This spawn_agent tool provides you access to sub-agents that inherit your current model by default. Do not set the `model` field unless the user explicitly asks for a different model or there is a clear task-specific reason. You should follow the rules and guidelines below to use this tool.
 
-Only use `spawn_agent` if and only if the user explicitly asks for sub-agents, delegation, or parallel agent work.
-Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn.
+Use `spawn_agent` only when the task is made clearer or faster by delegation under the policy below.
 {agent_role_usage_hint}
+
+{exploration_subagents_guidance}
 
 ### When to delegate vs. do the subtask yourself
 - First, quickly analyze the overall user task and form a succinct high-level plan. Identify which tasks are immediate blockers on the critical path, and which tasks are sidecar tasks that are needed but can run in parallel without blocking the next local step. As part of that plan, explicitly decide what immediate task you should do locally right now. Do this planning step before delegating to agents so you do not hand off the immediate blocking task to a submodel and then waste time waiting on it.
@@ -655,6 +662,7 @@ fn spawn_agent_tool_description_v2(
     available_models_description: Option<&str>,
     include_usage_hint: bool,
     usage_hint_text: Option<String>,
+    exploration_subagents_policy: ExplorationSubagentsPolicy,
 ) -> String {
     let agent_role_guidance = available_models_description.unwrap_or_default();
 
@@ -679,7 +687,12 @@ The new agent's canonical task name will be provided to it along with the messag
 {usage_hint_text}"#
         );
     }
-    tool_description
+    let exploration_subagents_guidance = exploration_subagents_policy.usage_guidance();
+    format!(
+        r#"
+        {tool_description}
+{exploration_subagents_guidance}"#
+    )
 }
 
 fn spawn_agent_models_description(models: &[ModelPreset]) -> String {

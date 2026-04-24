@@ -19,6 +19,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_tools::AdditionalProperties;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::DiscoverableTool;
+use codex_tools::ExplorationSubagentsPolicy;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ResponsesApiTool;
@@ -779,6 +780,38 @@ async fn spawn_agent_description_uses_configured_usage_hint_text() {
         "#,
         &description,
     );
+}
+
+#[tokio::test]
+async fn spawn_agent_description_renders_exploration_subagent_policy() {
+    for (policy, expected) in [
+        (
+            ExplorationSubagentsPolicy::Prefer,
+            "Prefer `explorer` subagents for nontrivial repository discovery",
+        ),
+        (
+            ExplorationSubagentsPolicy::Auto,
+            "Use `explorer` subagents for large, independent repository discovery",
+        ),
+        (
+            ExplorationSubagentsPolicy::Less,
+            "Only use `explorer` subagents when the user explicitly asks",
+        ),
+        (
+            ExplorationSubagentsPolicy::Disable,
+            "Do not proactively use `explorer` subagents for codebase discovery",
+        ),
+    ] {
+        let tools_config = multi_agent_v2_tools_config()
+            .await
+            .with_exploration_subagents_policy(policy);
+        let description = multi_agent_v2_spawn_agent_description(&tools_config);
+
+        assert!(
+            description.contains(expected),
+            "description should contain guidance for {policy:?}"
+        );
+    }
 }
 
 #[tokio::test]

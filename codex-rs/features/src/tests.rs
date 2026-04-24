@@ -378,6 +378,7 @@ enabled = true
 usage_hint_enabled = false
 usage_hint_text = "Custom delegation guidance."
 hide_spawn_agent_metadata = true
+exploration_subagents = "prefer"
 "#,
     )
     .expect("features table should deserialize");
@@ -390,6 +391,7 @@ hide_spawn_agent_metadata = true
         features.multi_agent_v2,
         Some(crate::FeatureToml::Config(crate::MultiAgentV2ConfigToml {
             enabled: Some(true),
+            exploration_subagents: Some(crate::ExplorationSubagentsConfigToml::Prefer),
             usage_hint_enabled: Some(false),
             usage_hint_text: Some("Custom delegation guidance.".to_string()),
             hide_spawn_agent_metadata: Some(true),
@@ -421,11 +423,46 @@ usage_hint_enabled = false
         features_toml.multi_agent_v2,
         Some(crate::FeatureToml::Config(crate::MultiAgentV2ConfigToml {
             enabled: None,
+            exploration_subagents: None,
             usage_hint_enabled: Some(false),
             usage_hint_text: None,
             hide_spawn_agent_metadata: None,
         }))
     );
+}
+
+#[test]
+fn multi_agent_v2_feature_config_deserializes_exploration_subagents_values() {
+    for (value, expected) in [
+        ("prefer", crate::ExplorationSubagentsConfigToml::Prefer),
+        ("auto", crate::ExplorationSubagentsConfigToml::Auto),
+        ("less", crate::ExplorationSubagentsConfigToml::Less),
+        ("disable", crate::ExplorationSubagentsConfigToml::Disable),
+    ] {
+        let features: FeaturesToml = toml::from_str(&format!(
+            r#"
+[multi_agent_v2]
+exploration_subagents = "{value}"
+"#
+        ))
+        .expect("features table should deserialize");
+
+        let Some(crate::FeatureToml::Config(config)) = features.multi_agent_v2 else {
+            panic!("multi_agent_v2 should deserialize as config");
+        };
+        assert_eq!(config.exploration_subagents, Some(expected));
+    }
+}
+
+#[test]
+fn multi_agent_v2_feature_config_rejects_invalid_exploration_subagents_value() {
+    toml::from_str::<FeaturesToml>(
+        r#"
+[multi_agent_v2]
+exploration_subagents = "always"
+"#,
+    )
+    .expect_err("invalid exploration_subagents value should fail");
 }
 
 #[test]

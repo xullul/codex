@@ -89,11 +89,20 @@ async fn apply_explorer_role_sets_model_and_adds_session_flags_layer() {
 }
 
 #[tokio::test]
-async fn apply_empty_explorer_role_preserves_current_model_and_reasoning_effort() {
-    let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+async fn apply_explorer_role_adds_developer_instructions_and_preserves_model_and_reasoning_effort()
+{
+    let (_home, mut config) = test_config_with_cli_overrides(vec![
+        (
+            "model".to_string(),
+            TomlValue::String("gpt-5.4-mini".to_string()),
+        ),
+        (
+            "model_reasoning_effort".to_string(),
+            TomlValue::String("high".to_string()),
+        ),
+    ])
+    .await;
     let before_layers = session_flags_layer_count(&config);
-    config.model = Some("gpt-5.4-mini".to_string());
-    config.model_reasoning_effort = Some(ReasoningEffort::High);
 
     apply_role_to_config(&mut config, Some("explorer"))
         .await
@@ -101,7 +110,14 @@ async fn apply_empty_explorer_role_preserves_current_model_and_reasoning_effort(
 
     assert_eq!(config.model.as_deref(), Some("gpt-5.4-mini"));
     assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));
-    assert_eq!(session_flags_layer_count(&config), before_layers);
+    assert!(
+        config
+            .developer_instructions
+            .as_deref()
+            .is_some_and(|instructions| instructions
+                .contains("You are an explorer subagent for codebase discovery."))
+    );
+    assert_eq!(session_flags_layer_count(&config), before_layers + 1);
 }
 
 #[tokio::test]

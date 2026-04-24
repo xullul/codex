@@ -1,4 +1,5 @@
 use crate::can_request_original_image_detail;
+use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_protocol::config_types::WebSearchConfig;
@@ -35,6 +36,45 @@ pub enum ToolUserShellType {
 pub enum UnifiedExecShellMode {
     Direct,
     ZshFork(ZshForkConfig),
+}
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum ExplorationSubagentsPolicy {
+    Prefer,
+    #[default]
+    Auto,
+    Less,
+    Disable,
+}
+
+impl From<ExplorationSubagentsConfigToml> for ExplorationSubagentsPolicy {
+    fn from(value: ExplorationSubagentsConfigToml) -> Self {
+        match value {
+            ExplorationSubagentsConfigToml::Prefer => Self::Prefer,
+            ExplorationSubagentsConfigToml::Auto => Self::Auto,
+            ExplorationSubagentsConfigToml::Less => Self::Less,
+            ExplorationSubagentsConfigToml::Disable => Self::Disable,
+        }
+    }
+}
+
+impl ExplorationSubagentsPolicy {
+    pub fn usage_guidance(self) -> &'static str {
+        match self {
+            Self::Prefer => {
+                "### Exploration subagents\n- Prefer `explorer` subagents for nontrivial repository discovery, especially when there are multiple independent codebase questions.\n- Keep urgent blocking exploration local when spawning would stop immediate progress."
+            }
+            Self::Auto => {
+                "### Exploration subagents\n- Use `explorer` subagents for large, independent repository discovery.\n- Keep small or immediately blocking exploration local."
+            }
+            Self::Less => {
+                "### Exploration subagents\n- Only use `explorer` subagents when the user explicitly asks for agents, delegation, or parallel work."
+            }
+            Self::Disable => {
+                "### Exploration subagents\n- Do not proactively use `explorer` subagents for codebase discovery.\n- Explicit non-exploration delegation remains available when subagent tools are enabled."
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -104,6 +144,7 @@ pub struct ToolsConfig {
     pub can_request_original_image_detail: bool,
     pub collab_tools: bool,
     pub multi_agent_v2: bool,
+    pub exploration_subagents_policy: ExplorationSubagentsPolicy,
     pub hide_spawn_agent_metadata: bool,
     pub spawn_agent_usage_hint: bool,
     pub spawn_agent_usage_hint_text: Option<String>,
@@ -225,6 +266,7 @@ impl ToolsConfig {
             can_request_original_image_detail: include_original_image_detail,
             collab_tools: include_collab_tools,
             multi_agent_v2: include_multi_agent_v2,
+            exploration_subagents_policy: ExplorationSubagentsPolicy::default(),
             hide_spawn_agent_metadata: false,
             spawn_agent_usage_hint: true,
             spawn_agent_usage_hint_text: None,
@@ -256,6 +298,14 @@ impl ToolsConfig {
 
     pub fn with_hide_spawn_agent_metadata(mut self, hide_spawn_agent_metadata: bool) -> Self {
         self.hide_spawn_agent_metadata = hide_spawn_agent_metadata;
+        self
+    }
+
+    pub fn with_exploration_subagents_policy(
+        mut self,
+        exploration_subagents_policy: ExplorationSubagentsPolicy,
+    ) -> Self {
+        self.exploration_subagents_policy = exploration_subagents_policy;
         self
     }
 

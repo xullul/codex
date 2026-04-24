@@ -669,6 +669,15 @@
       },
       "type": "object"
     },
+    "ExplorationSubagentsConfigToml": {
+      "enum": [
+        "prefer",
+        "auto",
+        "less",
+        "disable"
+      ],
+      "type": "string"
+    },
     "ExternalConfigMigrationPrompts": {
       "additionalProperties": false,
       "description": "Settings for notices we display to users via the tui and app-server clients (primarily the Codex IDE extension). NOTE: these are different from notifications - notices are warnings, NUX screens, acknowledgements, etc.",
@@ -1306,6 +1315,9 @@
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "exploration_subagents": {
+          "$ref": "#/definitions/ExplorationSubagentsConfigToml"
         },
         "hide_spawn_agent_metadata": {
           "type": "boolean"
