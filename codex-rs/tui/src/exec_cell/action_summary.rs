@@ -1,4 +1,5 @@
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::parse_command::ParsedCommandActionKind;
 
 use super::model::ExecCall;
 
@@ -7,6 +8,7 @@ pub(crate) enum ActionKind {
     Read,
     Search,
     List,
+    Inspect,
     Edit,
     Test,
     Build,
@@ -29,6 +31,8 @@ impl ActionSummary {
             (ActionKind::Read, _) => "Read",
             (ActionKind::Search, _) => "Search",
             (ActionKind::List, _) => "List",
+            (ActionKind::Inspect, true) => "Inspecting",
+            (ActionKind::Inspect, false) => "Inspected",
             (ActionKind::Edit, true) => "Editing",
             (ActionKind::Edit, false) => "Edited",
             (ActionKind::Test, true) => "Testing",
@@ -91,7 +95,25 @@ fn summarize_parsed(parsed: &[ParsedCommand]) -> Option<ActionSummary> {
                 suppress_success_output: true,
             })
         }
+        ParsedCommand::Action { kind, detail, cmd } => Some(ActionSummary {
+            kind: action_kind_from_parsed(kind),
+            detail: detail.clone().or_else(|| Some(cmd.clone())),
+            suppress_success_output: *kind == ParsedCommandActionKind::Inspect,
+        }),
         ParsedCommand::Unknown { .. } => None,
+    }
+}
+
+fn action_kind_from_parsed(kind: &ParsedCommandActionKind) -> ActionKind {
+    match kind {
+        ParsedCommandActionKind::Inspect => ActionKind::Inspect,
+        ParsedCommandActionKind::Edit => ActionKind::Edit,
+        ParsedCommandActionKind::Test => ActionKind::Test,
+        ParsedCommandActionKind::Build => ActionKind::Build,
+        ParsedCommandActionKind::Lint => ActionKind::Lint,
+        ParsedCommandActionKind::Git => ActionKind::Git,
+        ParsedCommandActionKind::Wait => ActionKind::Wait,
+        ParsedCommandActionKind::Run => ActionKind::Run,
     }
 }
 

@@ -1,3 +1,5 @@
+use crate::action_classification::action_from_script;
+use crate::action_classification::action_from_tokens;
 use crate::bash::extract_bash_command;
 use crate::bash::try_parse_shell;
 use crate::bash::try_parse_word_only_commands_sequence;
@@ -42,7 +44,13 @@ pub fn parse_command(command: &[String]) -> Vec<ParsedCommand> {
         .iter()
         .any(|cmd| matches!(cmd, ParsedCommand::Unknown { .. }))
     {
-        vec![single_unknown_for_command(command)]
+        let unknown = single_unknown_for_command(command);
+        if let ParsedCommand::Unknown { cmd } = &unknown
+            && let Some(action) = action_from_script(cmd)
+        {
+            return vec![action];
+        }
+        vec![unknown]
     } else {
         deduped
     }
@@ -65,6 +73,7 @@ fn single_unknown_for_command(command: &[String]) -> ParsedCommand {
 /// Tests are at the top to encourage using TDD + Codex to fix the implementation.
 mod tests {
     use super::*;
+    use codex_protocol::parse_command::ParsedCommandActionKind;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
     use std::string::ToString;
@@ -83,11 +92,13 @@ mod tests {
     }
 
     #[test]
-    fn git_status_is_unknown() {
+    fn git_status_is_git_action() {
         assert_parsed(
             &vec_str(&["git", "status"]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: "git status".to_string(),
+                kind: ParsedCommandActionKind::Git,
+                detail: Some("git status".to_string()),
             }],
         );
     }
@@ -138,8 +149,10 @@ mod tests {
         let inner = "git status | wc -l";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
-                cmd: inner.to_string(),
+            vec![ParsedCommand::Action {
+                cmd: "git status".to_string(),
+                kind: ParsedCommandActionKind::Git,
+                detail: Some("git status".to_string()),
             }],
         );
     }
@@ -149,8 +162,10 @@ mod tests {
         let inner = "echo foo > bar";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: "echo foo > bar".to_string(),
+                kind: ParsedCommandActionKind::Edit,
+                detail: Some("echo foo > bar".to_string()),
             }],
         );
     }
@@ -161,9 +176,27 @@ mod tests {
             "rg --version && node -v && pnpm -v && rg --files | wc -l && rg --files | head -n 40";
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
-                cmd: inner.to_string(),
-            }],
+            vec![
+                ParsedCommand::Action {
+                    cmd: "rg --version".to_string(),
+                    kind: ParsedCommandActionKind::Inspect,
+                    detail: Some("rg --version".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "node -v".to_string(),
+                    kind: ParsedCommandActionKind::Inspect,
+                    detail: Some("node -v".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm -v".to_string(),
+                    kind: ParsedCommandActionKind::Inspect,
+                    detail: Some("pnpm -v".to_string()),
+                },
+                ParsedCommand::ListFiles {
+                    cmd: "rg --files".to_string(),
+                    path: None,
+                },
+            ],
         );
     }
 
@@ -558,11 +591,35 @@ mod tests {
     }
 
     #[test]
-    fn supports_npm_run_build_is_unknown() {
+    fn supports_npm_run_build_is_build_action() {
         assert_parsed(
             &vec_str(&["npm", "run", "build"]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: "npm run build".to_string(),
+                kind: ParsedCommandActionKind::Build,
+                detail: Some("npm run build".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn fallback_action_classification_rejects_chained_unknown_scripts() {
+        let inner = "cargo test; custom-mutator";
+        assert_parsed(
+            &vec_str(&["bash", "-lc", inner]),
+            vec![ParsedCommand::Unknown {
+                cmd: inner.to_string(),
+            }],
+        );
+    }
+
+    #[test]
+    fn fallback_action_classification_rejects_multiline_unknown_scripts() {
+        let inner = "cargo test\ncustom-mutator";
+        assert_parsed(
+            &vec_str(&["bash", "-lc", inner]),
+            vec![ParsedCommand::Unknown {
+                cmd: inner.to_string(),
             }],
         );
     }
@@ -728,12 +785,14 @@ mod tests {
     }
 
     #[test]
-    fn python_without_file_walk_is_unknown() {
+    fn python_without_file_walk_is_run_action() {
         let inner = r#"python -c "print('hello')""#;
         assert_parsed(
             &vec_str(&["bash", "-lc", inner]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: shlex_join(&shlex_split_safe(inner)),
+                kind: ParsedCommandActionKind::Run,
+                detail: Some(shlex_join(&shlex_split_safe(inner))),
             }],
         );
     }
@@ -1371,8 +1430,10 @@ mod tests {
         let script = "$p='src\\effect-query.ts'; $lines=Get-Content $p; foreach ($i in 40..80) { Remove-Item $p; '{0}:{1}' -f $i, $lines[$i-1] }";
         assert_parsed(
             &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: script.to_string(),
+                kind: ParsedCommandActionKind::Edit,
+                detail: Some(script.to_string()),
             }],
         );
     }
@@ -1382,8 +1443,10 @@ mod tests {
         let script = "$lines=Get-Content src/effect-query.ts; for ($i = 0; $i -lt $lines.Count; $i++) { Remove-Item src/effect-query.ts; '{0}:{1}' -f ($i+1), $lines[$i] }";
         assert_parsed(
             &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: script.to_string(),
+                kind: ParsedCommandActionKind::Edit,
+                detail: Some(script.to_string()),
             }],
         );
     }
@@ -1493,14 +1556,118 @@ mod tests {
     }
 
     #[test]
-    fn powershell_get_command_probe_is_search() {
+    fn powershell_get_command_probe_is_inspect() {
         let script = "$ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue; if ($ffmpeg) { $ffmpeg.Source } else { 'NO_FFMPEG' }";
         assert_parsed(
             &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
-            vec![ParsedCommand::Search {
+            vec![ParsedCommand::Action {
                 cmd: script.to_string(),
-                query: Some("ffmpeg".to_string()),
-                path: Some("PATH".to_string()),
+                kind: ParsedCommandActionKind::Inspect,
+                detail: Some("ffmpeg in PATH".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_inspection_commands_are_inspect_actions() {
+        for script in [
+            "Test-Path Cargo.toml",
+            "Resolve-Path .",
+            "Get-Item Cargo.toml",
+            "Get-ItemProperty HKCU:/Software",
+            "Get-Acl Cargo.toml",
+            "Get-FileHash Cargo.toml",
+            "Get-Service",
+            "where.exe git",
+            "$env:PATH",
+            "$PSVersionTable",
+            "node -v",
+            "python --version",
+            "dotnet --info",
+            "cargo --version",
+            "ffmpeg -version",
+        ] {
+            assert_parsed(
+                &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+                vec![ParsedCommand::Action {
+                    cmd: script.to_string(),
+                    kind: ParsedCommandActionKind::Inspect,
+                    detail: Some(script.to_string()),
+                }],
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_get_process_with_simple_where_is_inspect() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Get-Process | Where-Object { $_.Name -like node }",
+            ]),
+            vec![ParsedCommand::Action {
+                cmd: "Get-Process".to_string(),
+                kind: ParsedCommandActionKind::Inspect,
+                detail: Some("Get-Process".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_unknown_where_body_stays_unknown() {
+        let script = "Get-Process | Where-Object { $_.Name.ToLower().Contains('node') }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Unknown {
+                cmd: script.to_string(),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_non_get_content_file_reads_are_read_or_search() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "[IO.File]::ReadAllText(src/lib.rs)",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "'[IO.File]::ReadAllText(src/lib.rs)'".to_string(),
+                name: "lib.rs".to_string(),
+                path: PathBuf::from("src/lib.rs"),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Import-Csv data/items.csv",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: "Import-Csv data/items.csv".to_string(),
+                name: "items.csv".to_string(),
+                path: PathBuf::from("data/items.csv"),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", "cmd /c type README.md"]),
+            vec![ParsedCommand::Read {
+                cmd: "cmd /c type README.md".to_string(),
+                name: "README.md".to_string(),
+                path: PathBuf::from("README.md"),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", "findstr TODO src/lib.rs"]),
+            vec![ParsedCommand::Search {
+                cmd: "findstr TODO src/lib.rs".to_string(),
+                query: Some("TODO".to_string()),
+                path: Some("lib.rs".to_string()),
             }],
         );
     }
@@ -1614,12 +1781,14 @@ mod tests {
     }
 
     #[test]
-    fn powershell_mutating_commands_fallback_to_unknown() {
+    fn powershell_mutating_commands_are_edit_actions() {
         let script = "Set-Content foo.txt bar";
         assert_parsed(
             &vec_str(&["pwsh", "-Command", script]),
-            vec![ParsedCommand::Unknown {
+            vec![ParsedCommand::Action {
                 cmd: script.to_string(),
+                kind: ParsedCommandActionKind::Edit,
+                detail: Some(script.to_string()),
             }],
         );
     }
@@ -2423,6 +2592,13 @@ fn drop_small_formatting_commands(mut commands: Vec<Vec<String>>) -> Vec<Vec<Str
 }
 
 fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
+    if let Some(head) = main_cmd.first()
+        && !is_python_command(head)
+        && let Some(action) = action_from_tokens(main_cmd)
+    {
+        return action;
+    }
+
     match main_cmd.split_first() {
         Some((head, tail)) if matches!(head.as_str(), "ls" | "eza" | "exa") => {
             let flags_with_vals: &[&str] = match head.as_str() {
@@ -2836,6 +3012,8 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                     cmd: shlex_join(main_cmd),
                     path: None,
                 }
+            } else if let Some(action) = action_from_tokens(main_cmd) {
+                action
             } else {
                 ParsedCommand::Unknown {
                     cmd: shlex_join(main_cmd),
@@ -2843,9 +3021,9 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
             }
         }
         // Other commands
-        _ => ParsedCommand::Unknown {
+        _ => action_from_tokens(main_cmd).unwrap_or_else(|| ParsedCommand::Unknown {
             cmd: shlex_join(main_cmd),
-        },
+        }),
     }
 }
 

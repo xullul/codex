@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::parse_command::ParsedCommandActionKind;
 
+use crate::action_classification::action_from_tokens;
 use crate::parse_command::shlex_join;
 use crate::powershell::UTF8_OUTPUT_PREFIX;
 use crate::powershell_exploration::summarize_known_exploration_script;
@@ -77,6 +79,9 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
             continue;
         }
         if is_mutating_or_ambiguous(&head_lower) {
+            if is_mutating_command(&head_lower) {
+                return vec![edit_action(script)];
+            }
             return vec![unknown(script)];
         }
 
@@ -96,6 +101,10 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
                 let path = path.or_else(|| prior_list_path.clone());
                 prior_list_path = None;
                 ParsedCommand::Search { cmd, query, path }
+            }
+            ParsedCommand::Action { cmd, kind, detail } => {
+                prior_list_path = None;
+                ParsedCommand::Action { cmd, kind, detail }
             }
             ParsedCommand::Unknown { .. } => return vec![unknown(script)],
         };
@@ -178,6 +187,20 @@ fn looks_like_wrapped_command_head(head: &str) -> bool {
             | "ffmpeg"
             | "ffmpeg.exe"
             | "get-command"
+            | "get-process"
+            | "get-service"
+            | "test-path"
+            | "resolve-path"
+            | "get-itemproperty"
+            | "get-acl"
+            | "get-filehash"
+            | "import-csv"
+            | "import-clixml"
+            | "select-xml"
+            | "more"
+            | "findstr"
+            | "where.exe"
+            | "cmd"
             | "foreach-object"
             | "foreach"
             | "%"
@@ -326,15 +349,24 @@ fn summarize_tokens(tokens: &[String]) -> ParsedCommand {
     match head_lower.as_str() {
         "get-content" | "gc" | "cat" | "type" => summarize_read(tokens, tail),
         "get-childitem" | "gci" | "dir" | "ls" => summarize_list(tokens, tail),
-        "get-item" | "gi" => summarize_list(tokens, tail),
+        "get-item" | "gi" => {
+            action_from_tokens(tokens).unwrap_or_else(|| summarize_list(tokens, tail))
+        }
+        "import-csv" | "import-clixml" => summarize_read(tokens, tail),
+        "select-xml" => summarize_select_xml(tokens, tail),
+        "cmd" => summarize_cmd(tokens, tail),
+        "more" => summarize_read(tokens, tail),
+        "findstr" => summarize_findstr(tokens, tail),
         "select-string" | "sls" => summarize_select_string(tokens, tail),
         "rg" => summarize_rg(tokens, tail),
         "git" => summarize_git(tokens, tail),
         "ffmpeg" | "ffmpeg.exe" => summarize_ffmpeg(tokens, tail),
         "get-command" => summarize_get_command(tokens, tail),
-        _ => ParsedCommand::Unknown {
-            cmd: ps_join(tokens),
-        },
+        _ => summarize_file_method(tokens)
+            .or_else(|| action_from_tokens(tokens))
+            .unwrap_or_else(|| ParsedCommand::Unknown {
+                cmd: ps_join(tokens),
+            }),
     }
 }
 
@@ -372,6 +404,80 @@ fn summarize_select_string(tokens: &[String], args: &[String]) -> ParsedCommand 
         query,
         path,
     }
+}
+
+fn summarize_select_xml(tokens: &[String], args: &[String]) -> ParsedCommand {
+    let path = named_value(args, &["-path", "-literalpath"])
+        .or_else(|| path_operands(args).into_iter().next());
+    match path {
+        Some(path) => ParsedCommand::Read {
+            cmd: ps_join(tokens),
+            name: short_display_path(&path),
+            path: PathBuf::from(path),
+        },
+        None => ParsedCommand::Unknown {
+            cmd: ps_join(tokens),
+        },
+    }
+}
+
+fn summarize_cmd(tokens: &[String], args: &[String]) -> ParsedCommand {
+    match args {
+        [flag, subcmd, path]
+            if flag.eq_ignore_ascii_case("/c") && subcmd.eq_ignore_ascii_case("type") =>
+        {
+            ParsedCommand::Read {
+                cmd: ps_join(tokens),
+                name: short_display_path(path),
+                path: PathBuf::from(path),
+            }
+        }
+        _ => ParsedCommand::Unknown {
+            cmd: ps_join(tokens),
+        },
+    }
+}
+
+fn summarize_findstr(tokens: &[String], args: &[String]) -> ParsedCommand {
+    let operands = positional_operands_skipping(args, &["/c:", "/g:", "/f:"]);
+    let query = operands.first().cloned();
+    let path = summarize_path_targets(operands.into_iter().skip(1).collect());
+    ParsedCommand::Search {
+        cmd: ps_join(tokens),
+        query,
+        path,
+    }
+}
+
+fn summarize_file_method(tokens: &[String]) -> Option<ParsedCommand> {
+    let [token] = tokens else {
+        return None;
+    };
+    let lower = token.to_ascii_lowercase();
+    let method = [
+        "[io.file]::readalltext",
+        "[io.file]::readalllines",
+        "[io.file]::readlines",
+        "[system.io.file]::readalltext",
+        "[system.io.file]::readalllines",
+        "[system.io.file]::readlines",
+    ]
+    .into_iter()
+    .find(|method| lower.starts_with(method))?;
+    let open = method.len();
+    let args = token.get(open..)?.trim();
+    let path = args
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    Some(ParsedCommand::Read {
+        cmd: ps_join(tokens),
+        name: short_display_path(&path),
+        path: PathBuf::from(path),
+    })
 }
 
 fn summarize_rg(tokens: &[String], args: &[String]) -> ParsedCommand {
@@ -455,6 +561,14 @@ fn summarize_git(tokens: &[String], args: &[String]) -> ParsedCommand {
 }
 
 fn summarize_ffmpeg(tokens: &[String], args: &[String]) -> ParsedCommand {
+    if args
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "-version" | "-v" | "--version"))
+        && let Some(action) = action_from_tokens(tokens)
+    {
+        return action;
+    }
+
     match ffmpeg_input_path(args) {
         Some(path) => ParsedCommand::Read {
             cmd: shlex_join(&["ffmpeg".to_string(), "-i".to_string(), path.clone()]),
@@ -491,10 +605,10 @@ fn ffmpeg_input_path(args: &[String]) -> Option<String> {
 fn summarize_get_command(tokens: &[String], args: &[String]) -> ParsedCommand {
     let operands = positional_operands_skipping(args, &["-erroraction"]);
     match operands.as_slice() {
-        [tool] => ParsedCommand::Search {
+        [tool] => ParsedCommand::Action {
             cmd: ps_join(tokens),
-            query: Some(tool.clone()),
-            path: Some("PATH".to_string()),
+            kind: ParsedCommandActionKind::Inspect,
+            detail: Some(format!("{tool} in PATH")),
         },
         _ => ParsedCommand::Unknown {
             cmd: ps_join(tokens),
@@ -733,6 +847,7 @@ fn is_formatting_helper(cmd: &str, args: &[String]) -> bool {
             | "pwd"
             | "out-null"
     ) || is_simple_foreach_projection(cmd, args)
+        || is_simple_where_filter(cmd, args)
 }
 
 fn is_safe_setup_helper(cmd: &str, args: &[String]) -> bool {
@@ -826,9 +941,65 @@ fn is_mutating_or_ambiguous(cmd: &str) -> bool {
     )
 }
 
+fn is_mutating_command(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "set-content"
+            | "sc"
+            | "add-content"
+            | "ac"
+            | "remove-item"
+            | "rm"
+            | "rmdir"
+            | "del"
+            | "erase"
+            | "new-item"
+            | "ni"
+            | "out-file"
+            | "copy-item"
+            | "cp"
+            | "cpi"
+            | "move-item"
+            | "mv"
+            | "mi"
+            | "rename-item"
+            | "ren"
+    )
+}
+
+fn is_simple_where_filter(cmd: &str, args: &[String]) -> bool {
+    if !matches!(cmd, "where-object" | "?") {
+        return false;
+    }
+    let normalized: Vec<String> = args
+        .iter()
+        .map(|arg| arg.trim().to_ascii_lowercase())
+        .filter(|arg| !arg.is_empty())
+        .collect();
+    matches!(
+        normalized.as_slice(),
+        [open, field, op, _value, close]
+            if open == "{"
+                && close == "}"
+                && field.starts_with("$_." )
+                && matches!(
+                    op.as_str(),
+                    "-eq" | "-ne" | "-like" | "-notlike" | "-match" | "-notmatch"
+                )
+    )
+}
+
 fn unknown(script: &str) -> ParsedCommand {
     ParsedCommand::Unknown {
         cmd: script.to_string(),
+    }
+}
+
+fn edit_action(script: &str) -> ParsedCommand {
+    ParsedCommand::Action {
+        cmd: script.to_string(),
+        kind: ParsedCommandActionKind::Edit,
+        detail: Some(script.to_string()),
     }
 }
 

@@ -48,6 +48,7 @@ use codex_protocol::openai_models::ModelAvailabilityNux as CoreModelAvailability
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::parse_command::ParsedCommand as CoreParsedCommand;
+use codex_protocol::parse_command::ParsedCommandActionKind as CoreParsedCommandActionKind;
 use codex_protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath as CoreFileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandboxEntry;
@@ -1898,9 +1899,58 @@ pub enum CommandAction {
         query: Option<String>,
         path: Option<String>,
     },
+    Action {
+        command: String,
+        kind: CommandActionKind,
+        detail: Option<String>,
+    },
     Unknown {
         command: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum CommandActionKind {
+    Inspect,
+    Edit,
+    Test,
+    Build,
+    Lint,
+    Git,
+    Wait,
+    Run,
+}
+
+impl From<CommandActionKind> for CoreParsedCommandActionKind {
+    fn from(value: CommandActionKind) -> Self {
+        match value {
+            CommandActionKind::Inspect => CoreParsedCommandActionKind::Inspect,
+            CommandActionKind::Edit => CoreParsedCommandActionKind::Edit,
+            CommandActionKind::Test => CoreParsedCommandActionKind::Test,
+            CommandActionKind::Build => CoreParsedCommandActionKind::Build,
+            CommandActionKind::Lint => CoreParsedCommandActionKind::Lint,
+            CommandActionKind::Git => CoreParsedCommandActionKind::Git,
+            CommandActionKind::Wait => CoreParsedCommandActionKind::Wait,
+            CommandActionKind::Run => CoreParsedCommandActionKind::Run,
+        }
+    }
+}
+
+impl From<CoreParsedCommandActionKind> for CommandActionKind {
+    fn from(value: CoreParsedCommandActionKind) -> Self {
+        match value {
+            CoreParsedCommandActionKind::Inspect => CommandActionKind::Inspect,
+            CoreParsedCommandActionKind::Edit => CommandActionKind::Edit,
+            CoreParsedCommandActionKind::Test => CommandActionKind::Test,
+            CoreParsedCommandActionKind::Build => CommandActionKind::Build,
+            CoreParsedCommandActionKind::Lint => CommandActionKind::Lint,
+            CoreParsedCommandActionKind::Git => CommandActionKind::Git,
+            CoreParsedCommandActionKind::Wait => CommandActionKind::Wait,
+            CoreParsedCommandActionKind::Run => CommandActionKind::Run,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1978,6 +2028,15 @@ impl CommandAction {
                 query,
                 path,
             } => CoreParsedCommand::Search { cmd, query, path },
+            CommandAction::Action {
+                command: cmd,
+                kind,
+                detail,
+            } => CoreParsedCommand::Action {
+                cmd,
+                kind: kind.into(),
+                detail,
+            },
             CommandAction::Unknown { command: cmd } => CoreParsedCommand::Unknown { cmd },
         }
     }
@@ -1998,6 +2057,11 @@ impl CommandAction {
                 command: cmd,
                 query,
                 path,
+            },
+            CoreParsedCommand::Action { cmd, kind, detail } => CommandAction::Action {
+                command: cmd,
+                kind: kind.into(),
+                detail,
             },
             CoreParsedCommand::Unknown { cmd } => CommandAction::Unknown { command: cmd },
         }
@@ -7553,6 +7617,33 @@ mod tests {
 
     fn test_absolute_path() -> AbsolutePathBuf {
         absolute_path("readable")
+    }
+
+    #[test]
+    fn command_action_action_round_trips_and_maps_core() {
+        let action = CommandAction::Action {
+            command: "cargo test -p codex-shell-command".to_string(),
+            kind: CommandActionKind::Test,
+            detail: Some("cargo test -p codex-shell-command".to_string()),
+        };
+
+        let json = serde_json::to_string(&action).expect("serialize command action");
+        assert_eq!(
+            json,
+            r#"{"type":"action","command":"cargo test -p codex-shell-command","kind":"test","detail":"cargo test -p codex-shell-command"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<CommandAction>(&json).expect("deserialize command action"),
+            action
+        );
+        assert_eq!(
+            action.into_core(),
+            CoreParsedCommand::Action {
+                cmd: "cargo test -p codex-shell-command".to_string(),
+                kind: CoreParsedCommandActionKind::Test,
+                detail: Some("cargo test -p codex-shell-command".to_string()),
+            }
+        );
     }
 
     #[test]

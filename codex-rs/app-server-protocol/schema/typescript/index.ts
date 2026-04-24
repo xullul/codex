@@ -46,6 +46,7 @@ export type { ModeKind } from "./ModeKind";
 export type { NetworkPolicyAmendment } from "./NetworkPolicyAmendment";
 export type { NetworkPolicyRuleAction } from "./NetworkPolicyRuleAction";
 export type { ParsedCommand } from "./ParsedCommand";
+export type { ParsedCommandActionKind } from "./ParsedCommandActionKind";
 export type { Personality } from "./Personality";
 export type { PlanType } from "./PlanType";
 export type { RealtimeConversationVersion } from "./RealtimeConversationVersion";

@@ -164,6 +164,36 @@
             "command": {
               "type": "string"
             },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/CommandActionKind"
+            },
+            "type": {
+              "enum": [
+                "action"
+              ],
+              "title": "ActionCommandActionType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command",
+            "kind",
+            "type"
+          ],
+          "title": "ActionCommandAction",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "command": {
+              "type": "string"
+            },
             "type": {
               "enum": [
                 "unknown"
@@ -180,6 +210,19 @@
           "type": "object"
         }
       ]
+    },
+    "CommandActionKind": {
+      "enum": [
+        "inspect",
+        "edit",
+        "test",
+        "build",
+        "lint",
+        "git",
+        "wait",
+        "run"
+      ],
+      "type": "string"
     },
     "CommandExecutionSource": {
       "enum": [

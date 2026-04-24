@@ -3453,6 +3453,36 @@
             "cmd": {
               "type": "string"
             },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/ParsedCommandActionKind"
+            },
+            "type": {
+              "enum": [
+                "action"
+              ],
+              "title": "ActionParsedCommandType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "kind",
+            "type"
+          ],
+          "title": "ActionParsedCommand",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "type": "string"
+            },
             "type": {
               "enum": [
                 "unknown"
@@ -3469,6 +3499,19 @@
           "type": "object"
         }
       ]
+    },
+    "ParsedCommandActionKind": {
+      "enum": [
+        "inspect",
+        "edit",
+        "test",
+        "build",
+        "lint",
+        "git",
+        "wait",
+        "run"
+      ],
+      "type": "string"
     },
     "PermissionGrantScope": {
       "enum": [
@@ -6377,6 +6420,36 @@
               "command": {
                 "type": "string"
               },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/definitions/v2/CommandActionKind"
+              },
+              "type": {
+                "enum": [
+                  "action"
+                ],
+                "title": "ActionCommandActionType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "kind",
+              "type"
+            ],
+            "title": "ActionCommandAction",
+            "type": "object"
+          },
+          {
+            "properties": {
+              "command": {
+                "type": "string"
+              },
               "type": {
                 "enum": [
                   "unknown"
@@ -6393,6 +6466,19 @@
             "type": "object"
           }
         ]
+      },
+      "CommandActionKind": {
+        "enum": [
+          "inspect",
+          "edit",
+          "test",
+          "build",
+          "lint",
+          "git",
+          "wait",
+          "run"
+        ],
+        "type": "string"
       },
       "CommandExecOutputDeltaNotification": {
         "$schema": "http://json-schema.org/draft-07/schema#",

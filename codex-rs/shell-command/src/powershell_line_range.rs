@@ -507,7 +507,8 @@ fn is_line_range_format_expression(expression: &str, loop_var: &str, lines_var: 
         format!("-f${loop_var},${lines_var}[${loop_var}-1]"),
         format!("-f(${loop_var}+1),${lines_var}[${loop_var}]"),
         format!("-f${loop_var}+1,${lines_var}[${loop_var}]"),
-    ].contains(&rest)
+    ]
+    .contains(&rest)
 }
 
 fn parse_string_literal_prefix(value: &str) -> Option<(String, &str)> {

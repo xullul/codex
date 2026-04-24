@@ -1,4 +1,5 @@
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::parse_command::ParsedCommandActionKind;
 
 use crate::powershell_syntax::matching_delimiter;
 use crate::powershell_syntax::powershell_literal;
@@ -62,10 +63,10 @@ fn summarize_get_command_probe(script: &str) -> Option<ParsedCommand> {
         return None;
     }
 
-    Some(ParsedCommand::Search {
+    Some(ParsedCommand::Action {
         cmd: script.to_string(),
-        query: Some(tool),
-        path: Some("PATH".to_string()),
+        kind: ParsedCommandActionKind::Inspect,
+        detail: Some(format!("{tool} in PATH")),
     })
 }
 

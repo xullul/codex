@@ -9,6 +9,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::parse_command::ParsedCommandActionKind;
 use codex_protocol::protocol::ExecCommandSource;
 
 #[derive(Clone, Debug, Default)]
@@ -160,6 +161,10 @@ impl ExecCell {
                     ParsedCommand::Read { .. }
                         | ParsedCommand::ListFiles { .. }
                         | ParsedCommand::Search { .. }
+                        | ParsedCommand::Action {
+                            kind: ParsedCommandActionKind::Inspect,
+                            ..
+                        }
                 )
             })
     }

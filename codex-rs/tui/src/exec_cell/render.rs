@@ -15,6 +15,7 @@ use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
 use codex_ansi_escape::ansi_escape_line;
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::parse_command::ParsedCommandActionKind;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_shell_command::bash::extract_bash_command;
 use codex_utils_elapsed::format_duration;
@@ -336,6 +337,17 @@ impl ExecCell {
                                 _ => vec![cmd.clone().into()],
                             };
                             lines.push(("Search", spans));
+                        }
+                        ParsedCommand::Action { kind, detail, cmd }
+                            if *kind == ParsedCommandActionKind::Inspect =>
+                        {
+                            lines.push((
+                                "Inspect",
+                                vec![detail.clone().unwrap_or_else(|| cmd.clone()).into()],
+                            ));
+                        }
+                        ParsedCommand::Action { cmd, .. } => {
+                            lines.push(("Run", vec![cmd.clone().into()]));
                         }
                         ParsedCommand::Unknown { cmd } => {
                             lines.push(("Run", vec![cmd.clone().into()]));
@@ -1005,6 +1017,81 @@ mod tests {
             1,
             "expected full URL in one rendered line, got: {rendered:?}"
         );
+    }
+
+    #[test]
+    fn action_command_display_uses_compact_snapshot() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec![
+                "cargo".into(),
+                "test".into(),
+                "-p".into(),
+                "codex-tui".into(),
+            ],
+            parsed: vec![ParsedCommand::Action {
+                cmd: "cargo test -p codex-tui".to_string(),
+                kind: ParsedCommandActionKind::Test,
+                detail: Some("cargo test -p codex-tui".to_string()),
+            }],
+            output: Some(CommandOutput {
+                exit_code: 0,
+                formatted_output: String::new(),
+                aggregated_output: "ok".to_string(),
+            }),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let rendered = ExecCell::new(call, /*animations_enabled*/ false)
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+
+        insta::assert_snapshot!(rendered, @r#"
+• Tested cargo test -p codex-tui
+  └ ok
+"#);
+    }
+
+    #[test]
+    fn inspect_action_exploring_display_uses_compact_snapshot() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec![
+                "pwsh".into(),
+                "-Command".into(),
+                "Get-Command ffmpeg".into(),
+            ],
+            parsed: vec![ParsedCommand::Action {
+                cmd: "Get-Command ffmpeg".to_string(),
+                kind: ParsedCommandActionKind::Inspect,
+                detail: Some("ffmpeg in PATH".to_string()),
+            }],
+            output: Some(CommandOutput {
+                exit_code: 0,
+                formatted_output: String::new(),
+                aggregated_output: "C:\\tools\\ffmpeg.exe".to_string(),
+            }),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let rendered = ExecCell::new(call, /*animations_enabled*/ false)
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+
+        insta::assert_snapshot!(rendered, @r#"
+• Explored
+  └ Inspect ffmpeg in PATH
+"#);
     }
 
     #[test]
