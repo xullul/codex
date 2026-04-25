@@ -41,6 +41,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         include_usage_hint: true,
         usage_hint_text: None,
         exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+        max_concurrent_threads_per_session: Some(4),
     });
 
     let ToolSpec::Function(ResponsesApiTool {
@@ -62,6 +63,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         .expect("spawn_agent should use object params");
     assert!(description.contains("Spawns an agent to work on the specified task."));
     assert!(description.contains("The spawned agent will have the same tools as you"));
+    assert!(description.contains("`max_concurrent_threads_per_session = 4`"));
     assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
     assert!(
         description
@@ -107,6 +109,7 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
         include_usage_hint: true,
         usage_hint_text: None,
         exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+        max_concurrent_threads_per_session: None,
     });
 
     let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = tool else {
@@ -158,6 +161,7 @@ fn spawn_agent_tool_v1_renders_exploration_policy_guidance() {
             include_usage_hint: true,
             usage_hint_text: None,
             exploration_subagents_policy: policy,
+            max_concurrent_threads_per_session: None,
         });
 
         let ToolSpec::Function(ResponsesApiTool { description, .. }) = tool else {

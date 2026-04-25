@@ -18,6 +18,7 @@ pub struct SpawnAgentToolOptions<'a> {
     pub include_usage_hint: bool,
     pub usage_hint_text: Option<String>,
     pub exploration_subagents_policy: ExplorationSubagentsPolicy,
+    pub max_concurrent_threads_per_session: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,7 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions<'_>) -> ToolSpe
             options.include_usage_hint,
             options.usage_hint_text,
             options.exploration_subagents_policy,
+            options.max_concurrent_threads_per_session,
         ),
         strict: false,
         defer_loading: None,
@@ -663,8 +665,16 @@ fn spawn_agent_tool_description_v2(
     include_usage_hint: bool,
     usage_hint_text: Option<String>,
     exploration_subagents_policy: ExplorationSubagentsPolicy,
+    max_concurrent_threads_per_session: Option<usize>,
 ) -> String {
     let agent_role_guidance = available_models_description.unwrap_or_default();
+    let concurrency_guidance = max_concurrent_threads_per_session
+        .map(|limit| {
+            format!(
+                "This session is configured with `max_concurrent_threads_per_session = {limit}` for concurrently open agent threads."
+            )
+        })
+        .unwrap_or_default();
 
     let tool_description = format!(
         r#"
@@ -674,7 +684,8 @@ You are then able to refer to this agent as `task_3` or `/root/task1/task_3` int
 The spawned agent will have the same tools as you and the ability to spawn its own subagents.
 {SPAWN_AGENT_INHERITED_MODEL_GUIDANCE}
 It will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes.
-The new agent's canonical task name will be provided to it along with the message."#
+The new agent's canonical task name will be provided to it along with the message.
+{concurrency_guidance}"#
     );
 
     if !include_usage_hint {

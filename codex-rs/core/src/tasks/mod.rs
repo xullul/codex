@@ -19,6 +19,7 @@ use tracing::info_span;
 use tracing::trace;
 use tracing::warn;
 
+use crate::config::Config;
 use crate::context::ContextualUserFragment;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::inspect_pending_input;
@@ -62,27 +63,50 @@ pub(crate) use user_shell::execute_user_shell_command;
 
 const GRACEFULL_INTERRUPTION_TIMEOUT_MS: u64 = 100;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InterruptedTurnHistoryMarker {
+    Disabled,
+    ContextualUser,
+    Developer,
+}
+
+impl InterruptedTurnHistoryMarker {
+    pub(crate) fn from_config(config: &Config) -> Self {
+        if !config.agent_interrupt_message_enabled {
+            return Self::Disabled;
+        }
+        if config.features.enabled(Feature::MultiAgentV2) {
+            Self::Developer
+        } else {
+            Self::ContextualUser
+        }
+    }
+}
+
 /// Shared model-visible marker used by both the real interrupt path and
 /// interrupted fork snapshots.
-pub(crate) fn interrupted_turn_history_marker(multi_agent_v2_enabled: bool) -> ResponseItem {
-    let guidance = if multi_agent_v2_enabled {
-        crate::context::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE
-    } else {
-        crate::context::TurnAborted::INTERRUPTED_GUIDANCE
-    };
-    let marker = crate::context::TurnAborted::new(guidance);
-    if multi_agent_v2_enabled {
-        ResponseItem::Message {
-            id: None,
-            role: "developer".to_string(),
-            content: vec![ContentItem::InputText {
-                text: marker.render(),
-            }],
-            end_turn: None,
-            phase: None,
+pub(crate) fn interrupted_turn_history_marker(
+    marker: InterruptedTurnHistoryMarker,
+) -> Option<ResponseItem> {
+    match marker {
+        InterruptedTurnHistoryMarker::Disabled => None,
+        InterruptedTurnHistoryMarker::ContextualUser => Some(ContextualUserFragment::into(
+            crate::context::TurnAborted::new(crate::context::TurnAborted::INTERRUPTED_GUIDANCE),
+        )),
+        InterruptedTurnHistoryMarker::Developer => {
+            let marker = crate::context::TurnAborted::new(
+                crate::context::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE,
+            );
+            Some(ResponseItem::Message {
+                id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: marker.render(),
+                }],
+                end_turn: None,
+                phase: None,
+            })
         }
-    } else {
-        ContextualUserFragment::into(marker)
     }
 }
 
@@ -653,14 +677,6 @@ impl Session {
             .await;
     }
 
-    pub(crate) async fn cleanup_after_interrupt(&self, turn_context: &Arc<TurnContext>) {
-        if let Some(manager) = turn_context.js_repl.manager_if_initialized()
-            && let Err(err) = manager.interrupt_turn_exec(&turn_context.sub_id).await
-        {
-            warn!("failed to interrupt js_repl kernel: {err}");
-        }
-    }
-
     async fn handle_task_abort(self: &Arc<Self>, task: RunningTask, reason: TurnAbortReason) {
         let sub_id = task.turn_context.sub_id.clone();
         if task.cancellation_token.is_cancelled() {
@@ -689,10 +705,11 @@ impl Session {
             .abort(session_ctx, Arc::clone(&task.turn_context))
             .await;
 
-        if reason == TurnAbortReason::Interrupted {
-            self.cleanup_after_interrupt(&task.turn_context).await;
-
-            let marker = interrupted_turn_history_marker(self.enabled(Feature::MultiAgentV2));
+        if reason == TurnAbortReason::Interrupted
+            && let Some(marker) = interrupted_turn_history_marker(
+                InterruptedTurnHistoryMarker::from_config(task.turn_context.config.as_ref()),
+            )
+        {
             self.record_into_history(std::slice::from_ref(&marker), task.turn_context.as_ref())
                 .await;
             self.persist_rollout_items(&[RolloutItem::ResponseItem(marker)])
