@@ -44,6 +44,7 @@ pub(crate) fn parse_powershell_script(
 fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> {
     let mut out = Vec::new();
     let mut cwd: Option<String> = None;
+    let mut cwd_stack: Vec<Option<String>> = Vec::new();
     let mut prior_list_path: Option<String> = None;
     let mut variables: HashMap<String, String> = HashMap::new();
     let mut command_result_variables: HashMap<String, ParsedCommand> = HashMap::new();
@@ -81,6 +82,22 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
                     None => path,
                 });
             }
+            prior_list_path = None;
+            continue;
+        }
+        if is_push_location(&head_lower) {
+            cwd_stack.push(cwd.clone());
+            if let Some(path) = path_operand(tail) {
+                cwd = Some(match cwd.as_deref() {
+                    Some(base) => join_paths(base, &path),
+                    None => path,
+                });
+            }
+            prior_list_path = None;
+            continue;
+        }
+        if is_pop_location(&head_lower, tail) {
+            cwd = cwd_stack.pop().unwrap_or(None);
             prior_list_path = None;
             continue;
         }
@@ -881,6 +898,14 @@ fn positional_operands_skipping(args: &[String], flags_with_values: &[&str]) -> 
 
 fn is_set_location(cmd: &str) -> bool {
     matches!(cmd, "set-location" | "cd" | "chdir" | "sl")
+}
+
+fn is_push_location(cmd: &str) -> bool {
+    matches!(cmd, "push-location" | "pushd")
+}
+
+fn is_pop_location(cmd: &str, args: &[String]) -> bool {
+    matches!(cmd, "pop-location" | "popd") && args.iter().all(|arg| arg.starts_with('-'))
 }
 
 fn is_formatting_helper(cmd: &str, args: &[String]) -> bool {

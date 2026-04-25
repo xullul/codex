@@ -15,9 +15,15 @@ pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand
     let mut statements = split_top_level_statements(script)?;
     let cwd = statements
         .first()
-        .and_then(|statement| set_location_target(statement));
+        .and_then(|statement| location_push_target(statement));
     if cwd.is_some() {
         statements.remove(0);
+    }
+    if statements
+        .last()
+        .is_some_and(|statement| is_pop_location(statement))
+    {
+        statements.pop();
     }
 
     let (path_binding, lines_assignment, loop_statement) = match statements.as_slice() {
@@ -53,18 +59,29 @@ enum ReadTarget {
     Variable { name: String, display_token: String },
 }
 
-fn set_location_target(statement: &str) -> Option<String> {
+fn location_push_target(statement: &str) -> Option<String> {
     let tokens = split_command_tokens(strip_wrapping_parens(statement.trim()))?;
     let [head, tail @ ..] = tokens.as_slice() else {
         return None;
     };
     if !matches!(
         head.to_ascii_lowercase().as_str(),
-        "set-location" | "cd" | "chdir" | "sl"
+        "set-location" | "cd" | "chdir" | "sl" | "push-location" | "pushd"
     ) {
         return None;
     }
     location_path_operand(tail)
+}
+
+fn is_pop_location(statement: &str) -> bool {
+    let Some(tokens) = split_command_tokens(strip_wrapping_parens(statement.trim())) else {
+        return false;
+    };
+    let [head, tail @ ..] = tokens.as_slice() else {
+        return false;
+    };
+    matches!(head.to_ascii_lowercase().as_str(), "pop-location" | "popd")
+        && tail.iter().all(|arg| arg.starts_with('-'))
 }
 
 fn location_path_operand(args: &[String]) -> Option<String> {
@@ -415,7 +432,9 @@ fn is_supported_for_condition(condition: &str, loop_var: &str, lines_var: &str) 
         .iter()
         .any(|prefix| {
             condition.strip_prefix(prefix).is_some_and(|limit| {
-                is_numeric_literal(limit) || is_count_property_reference(limit, lines_var)
+                is_numeric_literal(limit)
+                    || is_count_property_reference(limit, lines_var)
+                    || is_min_count_bound(limit, lines_var)
             })
         })
 }
@@ -425,6 +444,20 @@ fn is_count_property_reference(value: &str, lines_var: &str) -> bool {
         value,
         count if count == format!("${lines_var}.count") || count == format!("${lines_var}.length")
     )
+}
+
+fn is_min_count_bound(value: &str, lines_var: &str) -> bool {
+    let Some(args) = value
+        .strip_prefix("[math]::min(")
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return false;
+    };
+    let Some((left, right)) = args.split_once(',') else {
+        return false;
+    };
+    (is_count_property_reference(left, lines_var) && is_numeric_literal(right))
+        || (is_numeric_literal(left) && is_count_property_reference(right, lines_var))
 }
 
 fn is_numeric_literal(value: &str) -> bool {

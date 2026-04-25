@@ -1,12 +1,17 @@
 pub(crate) fn split_top_level_statements(script: &str) -> Option<Vec<String>> {
-    split_top_level(script, ';')
+    split_top_level(script, StatementSeparator::Statement)
 }
 
 pub(crate) fn split_pipeline_parts(script: &str) -> Option<Vec<String>> {
-    split_top_level(script, '|')
+    split_top_level(script, StatementSeparator::Char('|'))
 }
 
-fn split_top_level(script: &str, separator: char) -> Option<Vec<String>> {
+enum StatementSeparator {
+    Statement,
+    Char(char),
+}
+
+fn split_top_level(script: &str, separator: StatementSeparator) -> Option<Vec<String>> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut paren_depth = 0usize;
@@ -37,7 +42,11 @@ fn split_top_level(script: &str, separator: char) -> Option<Vec<String>> {
             '}' => brace_depth = brace_depth.checked_sub(1)?,
             '[' => bracket_depth += 1,
             ']' => bracket_depth = bracket_depth.checked_sub(1)?,
-            ch if ch == separator && paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 => {
+            ch if is_separator(ch, &separator)
+                && paren_depth == 0
+                && brace_depth == 0
+                && bracket_depth == 0 =>
+            {
                 push_part(script, start, idx, &mut parts);
                 start = idx + ch.len_utf8();
             }
@@ -50,6 +59,13 @@ fn split_top_level(script: &str, separator: char) -> Option<Vec<String>> {
     }
     push_part(script, start, script.len(), &mut parts);
     Some(parts)
+}
+
+fn is_separator(ch: char, separator: &StatementSeparator) -> bool {
+    match separator {
+        StatementSeparator::Statement => ch == ';' || ch == '\n',
+        StatementSeparator::Char(separator) => ch == *separator,
+    }
 }
 
 fn push_part(script: &str, start: usize, end: usize, parts: &mut Vec<String>) {

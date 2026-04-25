@@ -1418,6 +1418,42 @@ mod tests {
     }
 
     #[test]
+    fn powershell_newline_line_range_after_set_location_is_read() {
+        let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'\n$lines = Get-Content -LiteralPath 'src\\engine\\duel.ts'\nfor($i=930; $i -le [Math]::Min($lines.Count, 1025); $i++) { '{0}:{1}' -f $i,$lines[$i-1] }";
+        let expected_path =
+            PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra").join("src\\engine\\duel.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "duel.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_push_location_line_range_is_read() {
+        let script = "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $lines=Get-Content -LiteralPath 'src\\engine\\duel.ts'; for($i=930; $i -le 1025; $i++) { '{0}:{1}' -f $i,$lines[$i-1] }; Pop-Location";
+        let expected_path =
+            PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra").join("src\\engine\\duel.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "duel.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_multi_range_line_preview_after_set_location_is_read() {
         let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $p='src/engine/duel.ts'; $lines=Get-Content -LiteralPath $p; foreach($range in @(@(3280,3385),@(3390,3530),@(3528,3635))) { for($i=$range[0];$i -le $range[1];$i++){ if($i -le $lines.Length){ '{0,5}: {1}' -f $i,$lines[$i-1] }} }";
         let expected_path =
@@ -1605,6 +1641,47 @@ mod tests {
                 cmd: "Select-String -Path src/lib.rs -Pattern TODO".to_string(),
                 query: Some("TODO".to_string()),
                 path: Some("lib.rs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_push_location_wrapped_actions_are_semantic() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Push-Location codex-rs; cargo test -p codex-features; Pop-Location",
+            ]),
+            vec![ParsedCommand::Action {
+                cmd: "cargo test -p codex-features".to_string(),
+                kind: ParsedCommandActionKind::Test,
+                detail: Some("cargo test -p codex-features".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Push-Location codex-rs; cargo run -p codex-core --bin codex-write-config-schema; Pop-Location",
+            ]),
+            vec![ParsedCommand::Action {
+                cmd: "cargo run -p codex-core --bin codex-write-config-schema".to_string(),
+                kind: ParsedCommandActionKind::Run,
+                detail: Some("cargo run -p codex-core --bin codex-write-config-schema".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_dynamic_invocation_stays_unknown() {
+        let script = "$cmd='Get-ChildItem'; & $cmd";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Unknown {
+                cmd: script.to_string(),
             }],
         );
     }

@@ -1328,6 +1328,60 @@ async fn powershell_exec_renders_semantic_command_result_variable_and_keeps_raw_
 }
 
 #[tokio::test]
+async fn powershell_exec_renders_semantic_push_location_action_and_keeps_raw_transcript() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let raw_cmd = "Push-Location codex-rs; cargo test -p codex-features; Pop-Location";
+    let command = vec![
+        "powershell.exe".to_string(),
+        "-NoProfile".to_string(),
+        "-Command".to_string(),
+        raw_cmd.to_string(),
+    ];
+    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let begin = ExecCommandBeginEvent {
+        call_id: "powershell-push-location-action".to_string(),
+        process_id: None,
+        turn_id: "turn-1".to_string(),
+        command,
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        parsed_cmd,
+        source: ExecCommandSource::Agent,
+        interaction_input: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "powershell-push-location-action-begin".to_string(),
+        msg: EventMsg::ExecCommandBegin(begin.clone()),
+    });
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    let mut completed = None;
+    let mut transcript = None;
+    while let Ok(app_ev) = rx.try_recv() {
+        if let AppEvent::InsertHistoryCell(cell) = app_ev {
+            completed = Some(lines_to_single_string(&cell.display_lines(/*width*/ 80)));
+            transcript = Some(lines_to_single_string(&cell.transcript_lines(/*width*/ 80)));
+        }
+    }
+    let completed = completed.expect("completed exec history cell");
+    assert!(
+        completed.contains("Tested cargo test -p codex-features"),
+        "expected completed semantic cargo test action, got {completed}"
+    );
+    assert!(
+        !completed.contains("Push-Location") && !completed.contains("Pop-Location"),
+        "expected semantic action instead of raw push/pop wrappers, got {completed}"
+    );
+    let transcript = transcript.expect("completed exec transcript");
+    assert!(
+        transcript.contains("Push-Location codex-rs")
+            && transcript.contains("cargo test -p codex-features")
+            && transcript.contains("Pop-Location"),
+        "expected transcript to keep raw wrapper command, got {transcript}"
+    );
+}
+
+#[tokio::test]
 async fn powershell_exec_renders_semantic_ffmpeg_probe_and_keeps_raw_transcript() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let raw_cmd = "$out='C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames'; New-Item -ItemType Directory -Force -Path $out | Out-Null; ffmpeg -hide_banner -loglevel error -i 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\tweet-video.mp4' -vf \"fps=1/10,scale=480:-1\" \"$out\\frame-%02d.jpg\"; Get-ChildItem $out | Select-Object -ExpandProperty Name";

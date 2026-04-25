@@ -69,9 +69,7 @@ pub(crate) fn summarize_call(call: &ExecCall, command_display: &str) -> Option<A
 }
 
 fn summarize_parsed(parsed: &[ParsedCommand]) -> Option<ActionSummary> {
-    let [single] = parsed else {
-        return None;
-    };
+    let single = primary_parsed_summary(parsed)?;
     match single {
         ParsedCommand::Read { name, .. } => Some(ActionSummary {
             kind: ActionKind::Read,
@@ -102,6 +100,32 @@ fn summarize_parsed(parsed: &[ParsedCommand]) -> Option<ActionSummary> {
         }),
         ParsedCommand::Unknown { .. } => None,
     }
+}
+
+fn primary_parsed_summary(parsed: &[ParsedCommand]) -> Option<&ParsedCommand> {
+    if let [single] = parsed {
+        return Some(single);
+    }
+
+    if !parsed.iter().all(is_non_exploration_action) {
+        return None;
+    }
+    parsed.first()
+}
+
+fn is_non_exploration_action(parsed: &ParsedCommand) -> bool {
+    matches!(
+        parsed,
+        ParsedCommand::Action {
+            kind: ParsedCommandActionKind::Test
+                | ParsedCommandActionKind::Build
+                | ParsedCommandActionKind::Lint
+                | ParsedCommandActionKind::Git
+                | ParsedCommandActionKind::Wait
+                | ParsedCommandActionKind::Run,
+            ..
+        }
+    )
 }
 
 fn action_kind_from_parsed(kind: &ParsedCommandActionKind) -> ActionKind {
