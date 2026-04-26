@@ -1149,6 +1149,65 @@ async fn powershell_exec_renders_semantic_set_location_line_read_and_keeps_raw_t
 }
 
 #[tokio::test]
+async fn powershell_exec_renders_semantic_streaming_line_read_and_keeps_raw_transcript() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let raw_cmd = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $i=1; Get-Content src\\engine\\compiled-effects.ts | ForEach-Object { '{0,5}: {1}' -f $i, $_; $i++ } | Select-Object -Skip 680 -First 100";
+    let command = vec![
+        "powershell.exe".to_string(),
+        "-NoProfile".to_string(),
+        "-Command".to_string(),
+        raw_cmd.to_string(),
+    ];
+    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let begin = ExecCommandBeginEvent {
+        call_id: "powershell-streaming-line-read".to_string(),
+        process_id: None,
+        turn_id: "turn-1".to_string(),
+        command,
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        parsed_cmd,
+        source: ExecCommandSource::Agent,
+        interaction_input: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "powershell-streaming-line-read-begin".to_string(),
+        msg: EventMsg::ExecCommandBegin(begin.clone()),
+    });
+
+    let active = active_blob(&chat);
+    assert!(
+        !active.contains("Set-Location"),
+        "expected semantic summary instead of raw Set-Location, got {active}"
+    );
+    assert!(
+        !active.contains("Select-Object"),
+        "expected semantic summary instead of raw Select-Object, got {active}"
+    );
+    assert!(
+        active.contains("Read compiled-effects.ts"),
+        "expected semantic file read, got {active}"
+    );
+    assert_chatwidget_snapshot!("powershell_semantic_streaming_line_read_active", active);
+
+    let transcript = lines_to_single_string(
+        &chat
+            .active_cell
+            .as_ref()
+            .expect("active cell")
+            .transcript_lines(/*width*/ 80),
+    );
+    let normalized_transcript = transcript.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized_transcript.contains("ForEach-Object")
+            && normalized_transcript.contains("Select-Object -Skip 680 -First 100"),
+        "expected transcript to keep raw streaming read command, got {transcript}"
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+}
+
+#[tokio::test]
 async fn powershell_exec_renders_semantic_multi_range_read_and_keeps_raw_transcript() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let raw_cmd = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $p='src/engine/duel.ts'; $lines=Get-Content -LiteralPath $p; foreach($range in @(@(3280,3385),@(3390,3530),@(3528,3635))) { for($i=$range[0];$i -le $range[1];$i++){ if($i -le $lines.Length){ '{0,5}: {1}' -f $i,$lines[$i-1] }} }";

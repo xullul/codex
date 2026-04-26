@@ -7,6 +7,7 @@ use crate::powershell_syntax::matching_delimiter;
 use crate::powershell_syntax::powershell_literal as quoted_powershell_literal;
 use crate::powershell_syntax::simple_variable_name;
 use crate::powershell_syntax::split_command_tokens;
+use crate::powershell_syntax::split_pipeline_parts;
 use crate::powershell_syntax::split_top_level_statements;
 use crate::powershell_syntax::strip_case_insensitive_keyword;
 use crate::powershell_syntax::strip_wrapping_parens;
@@ -24,6 +25,10 @@ pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand
         .is_some_and(|statement| is_pop_location(statement))
     {
         statements.pop();
+    }
+
+    if let Some(read) = summarize_streaming_line_range_preview(&statements, cwd.as_deref()) {
+        return Some(read);
     }
 
     let mut remaining = statements.as_slice();
@@ -153,6 +158,12 @@ fn numeric_range_variable_assignment(statement: &str) -> Option<String> {
     is_range_expression(rhs.trim()).then_some(variable)
 }
 
+fn numeric_variable_assignment(statement: &str) -> Option<String> {
+    let (lhs, rhs) = split_assignment(statement)?;
+    let variable = assignment_name(lhs.trim())?;
+    is_numeric_literal(rhs.trim()).then_some(variable)
+}
+
 fn get_content_assignment(statement: &str) -> Option<(String, ReadTarget)> {
     let (lhs, rhs) = split_assignment(statement)?;
     let target_var = assignment_name(lhs.trim())?;
@@ -167,6 +178,191 @@ fn get_content_assignment(statement: &str) -> Option<(String, ReadTarget)> {
         return None;
     }
     Some((target_var, get_content_path_operand(tail)?))
+}
+
+fn get_content_command(statement: &str) -> Option<ReadTarget> {
+    let tokens = split_command_tokens(strip_wrapping_parens(statement.trim()))?;
+    let [head, tail @ ..] = tokens.as_slice() else {
+        return None;
+    };
+    if !matches!(
+        head.to_ascii_lowercase().as_str(),
+        "get-content" | "gc" | "cat" | "type"
+    ) {
+        return None;
+    }
+    get_content_path_operand(tail)
+}
+
+fn summarize_streaming_line_range_preview(
+    statements: &[String],
+    cwd: Option<&str>,
+) -> Option<ParsedCommand> {
+    let (pipeline_statement, setup_statements) = statements.split_last()?;
+    if setup_statements.len() > 2 {
+        return None;
+    }
+
+    let pipeline_parts = split_pipeline_parts(pipeline_statement)?;
+    let [get_content, tail @ ..] = pipeline_parts.as_slice() else {
+        return None;
+    };
+    if tail.is_empty() {
+        return None;
+    }
+
+    let read_target = get_content_command(get_content)?;
+    let counter_var = streaming_line_range_tail_counter(tail)?;
+    if let Some(counter_var) = counter_var.as_deref()
+        && !setup_statements
+            .iter()
+            .any(|statement| numeric_variable_assignment(statement).as_deref() == Some(counter_var))
+    {
+        return None;
+    }
+
+    let path_binding = setup_statements.iter().find_map(|statement| {
+        let binding = literal_variable_assignment(statement)?;
+        match &read_target {
+            ReadTarget::Variable { name, .. } if name == &binding.0 => Some(binding),
+            _ => None,
+        }
+    });
+    if !setup_statements.iter().all(|statement| {
+        is_streaming_setup_statement(statement, &read_target, counter_var.as_deref())
+    }) {
+        return None;
+    }
+
+    let path = apply_cwd_to_path(
+        cwd,
+        &resolve_read_target(path_binding.as_ref(), read_target),
+    );
+    Some(ParsedCommand::Read {
+        cmd: shlex_join(&["Get-Content".to_string(), path.clone()]),
+        name: short_display_path(&path),
+        path: PathBuf::from(path),
+    })
+}
+
+fn is_streaming_setup_statement(
+    statement: &str,
+    read_target: &ReadTarget,
+    counter_var: Option<&str>,
+) -> bool {
+    if let Some(counter_var) = counter_var
+        && numeric_variable_assignment(statement).as_deref() == Some(counter_var)
+    {
+        return true;
+    }
+    if let Some((name, _)) = literal_variable_assignment(statement)
+        && matches!(read_target, ReadTarget::Variable { name: read_name, .. } if read_name == &name)
+    {
+        return true;
+    }
+    false
+}
+
+fn streaming_line_range_tail_counter(parts: &[String]) -> Option<Option<String>> {
+    let mut counter_var = None;
+    for part in parts {
+        if is_select_object_line_limiter(part) {
+            continue;
+        }
+        if let Some(next_counter_var) = foreach_line_number_projection_counter(part) {
+            if counter_var
+                .as_ref()
+                .is_some_and(|existing| existing != &next_counter_var)
+            {
+                return None;
+            }
+            counter_var = Some(next_counter_var);
+            continue;
+        }
+        return None;
+    }
+    Some(counter_var)
+}
+
+fn is_select_object_line_limiter(statement: &str) -> bool {
+    let tokens = match split_command_tokens(strip_wrapping_parens(statement.trim())) {
+        Some(tokens) => tokens,
+        None => return false,
+    };
+    let [head, args @ ..] = tokens.as_slice() else {
+        return false;
+    };
+    if !matches!(
+        head.to_ascii_lowercase().as_str(),
+        "select-object" | "select"
+    ) {
+        return false;
+    }
+    let mut saw_limiter = false;
+    let mut i = 0;
+    while i < args.len() {
+        let lower = args[i].to_ascii_lowercase();
+        if let Some((flag, value)) = lower.split_once('=')
+            && matches!(flag, "-skip" | "-first" | "-last" | "-index")
+            && !value.is_empty()
+        {
+            saw_limiter = true;
+            i += 1;
+            continue;
+        }
+        if matches!(lower.as_str(), "-skip" | "-first" | "-last" | "-index") {
+            if i + 1 >= args.len() {
+                return false;
+            }
+            saw_limiter = true;
+            i += 2;
+            continue;
+        }
+        return false;
+    }
+    saw_limiter
+}
+
+fn foreach_line_number_projection_counter(statement: &str) -> Option<String> {
+    let rest = strip_foreach_object_keyword(statement.trim())?.trim_start();
+    if !rest.starts_with('{') {
+        return None;
+    }
+    let body_end = matching_delimiter(rest, 0, '{', '}')?;
+    if !rest[body_end + 1..].trim().is_empty() {
+        return None;
+    }
+    let body = &rest[1..body_end];
+    let statements = split_top_level_statements(body)?;
+    let [format_statement, increment_statement] = statements.as_slice() else {
+        return None;
+    };
+    let counter_var = increment_variable(increment_statement)?;
+    is_streaming_line_number_format_expression(format_statement, &counter_var)
+        .then_some(counter_var)
+}
+
+fn strip_foreach_object_keyword(value: &str) -> Option<&str> {
+    strip_case_insensitive_keyword(value, "ForEach-Object")
+        .or_else(|| strip_case_insensitive_keyword(value, "foreach"))
+        .or_else(|| value.strip_prefix('%'))
+}
+
+fn increment_variable(statement: &str) -> Option<String> {
+    let compact = remove_ascii_whitespace(statement).to_ascii_lowercase();
+    let variable = compact.strip_suffix("++")?;
+    simple_variable_name(variable)
+}
+
+fn is_streaming_line_number_format_expression(expression: &str, counter_var: &str) -> bool {
+    let Some((format, rest)) = parse_string_literal_prefix(expression.trim()) else {
+        return false;
+    };
+    if !format_has_line_number_and_text_placeholders(&format) {
+        return false;
+    }
+    let rest = remove_ascii_whitespace(rest).to_ascii_lowercase();
+    rest == format!("-f${counter_var},$_")
 }
 
 fn resolve_read_target(path_binding: Option<&(String, String)>, read_target: ReadTarget) -> String {

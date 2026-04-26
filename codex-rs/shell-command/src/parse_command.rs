@@ -1436,6 +1436,42 @@ mod tests {
     }
 
     #[test]
+    fn powershell_location_wrapped_get_content_select_object_is_read() {
+        let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; Get-Content src\\engine\\compiled-effects.ts | Select-Object -Skip 680 -First 100";
+        let expected_path = PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra")
+            .join("src\\engine\\compiled-effects.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "compiled-effects.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_location_wrapped_streaming_line_range_is_read() {
+        let script = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $i=1; Get-Content src\\engine\\compiled-effects.ts | ForEach-Object { '{0,5}: {1}' -f $i, $_; $i++ } | Select-Object -Skip 680 -First 100";
+        let expected_path = PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra")
+            .join("src\\engine\\compiled-effects.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "compiled-effects.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_push_location_line_range_is_read() {
         let script = "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $lines=Get-Content -LiteralPath 'src\\engine\\duel.ts'; for($i=930; $i -le 1025; $i++) { '{0}:{1}' -f $i,$lines[$i-1] }; Pop-Location";
         let expected_path =
