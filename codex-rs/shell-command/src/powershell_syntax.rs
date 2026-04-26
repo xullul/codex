@@ -18,9 +18,22 @@ fn split_top_level(script: &str, separator: StatementSeparator) -> Option<Vec<St
     let mut brace_depth = 0usize;
     let mut bracket_depth = 0usize;
     let mut quote: Option<char> = None;
+    let mut here_string_quote: Option<char> = None;
+    let mut at_line_start = true;
     let mut chars = script.char_indices().peekable();
 
     while let Some((idx, ch)) = chars.next() {
+        if let Some(q) = here_string_quote {
+            if at_line_start && ch == q && chars.peek().is_some_and(|(_, next)| *next == '@') {
+                chars.next();
+                here_string_quote = None;
+                at_line_start = false;
+                continue;
+            }
+            at_line_start = ch == '\n' || ch == '\r';
+            continue;
+        }
+
         if let Some(q) = quote {
             if ch == '`' {
                 chars.next();
@@ -31,10 +44,18 @@ fn split_top_level(script: &str, separator: StatementSeparator) -> Option<Vec<St
                     quote = None;
                 }
             }
+            at_line_start = ch == '\n' || ch == '\r';
             continue;
         }
 
         match ch {
+            '@' if chars
+                .peek()
+                .is_some_and(|(_, next)| *next == '\'' || *next == '"') =>
+            {
+                here_string_quote = chars.next().map(|(_, quote)| quote);
+                at_line_start = false;
+            }
             '\'' | '"' => quote = Some(ch),
             '(' => paren_depth += 1,
             ')' => paren_depth = paren_depth.checked_sub(1)?,
@@ -52,9 +73,17 @@ fn split_top_level(script: &str, separator: StatementSeparator) -> Option<Vec<St
             }
             _ => {}
         }
+        if here_string_quote.is_none() && quote.is_none() {
+            at_line_start = ch == '\n' || ch == '\r';
+        }
     }
 
-    if quote.is_some() || paren_depth != 0 || brace_depth != 0 || bracket_depth != 0 {
+    if quote.is_some()
+        || here_string_quote.is_some()
+        || paren_depth != 0
+        || brace_depth != 0
+        || bracket_depth != 0
+    {
         return None;
     }
     push_part(script, start, script.len(), &mut parts);

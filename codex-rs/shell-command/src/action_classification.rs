@@ -173,14 +173,9 @@ fn classify_bazel(args: &[String]) -> Option<ParsedCommandActionKind> {
 }
 
 fn classify_git(args: &[String]) -> Option<ParsedCommandActionKind> {
-    let subcommand = args.first()?.to_ascii_lowercase();
-    if matches!(
-        subcommand.as_str(),
-        "status" | "log" | "diff" | "show" | "branch"
-    ) {
-        Some(ParsedCommandActionKind::Git)
-    } else {
-        None
+    match args.first()?.as_str() {
+        "grep" | "ls-files" => None,
+        _ => Some(ParsedCommandActionKind::Git),
     }
 }
 

@@ -1382,6 +1382,64 @@ async fn powershell_exec_renders_semantic_push_location_action_and_keeps_raw_tra
 }
 
 #[tokio::test]
+async fn powershell_exec_renders_semantic_location_wrapped_git_and_keeps_raw_transcript() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let raw_cmd = "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git show :src/engine/duel.ts | Select-Object -Skip 5028 -First 18";
+    let command = vec![
+        "powershell.exe".to_string(),
+        "-NoProfile".to_string(),
+        "-Command".to_string(),
+        raw_cmd.to_string(),
+    ];
+    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let begin = ExecCommandBeginEvent {
+        call_id: "powershell-location-git".to_string(),
+        process_id: None,
+        turn_id: "turn-1".to_string(),
+        command,
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        parsed_cmd,
+        source: ExecCommandSource::Agent,
+        interaction_input: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "powershell-location-git-begin".to_string(),
+        msg: EventMsg::ExecCommandBegin(begin.clone()),
+    });
+
+    let active = active_blob(&chat);
+    assert!(
+        !active.contains("Set-Location"),
+        "expected semantic git summary instead of raw Set-Location, got {active}"
+    );
+    assert!(
+        !active.contains("Select-Object"),
+        "expected semantic git summary instead of raw projection, got {active}"
+    );
+    assert!(
+        active.contains("Checking git git show :src/engine/duel.ts"),
+        "expected semantic git action, got {active}"
+    );
+    assert_chatwidget_snapshot!("powershell_semantic_location_wrapped_git_active", active);
+
+    let transcript = lines_to_single_string(
+        &chat
+            .active_cell
+            .as_ref()
+            .expect("active cell")
+            .transcript_lines(/*width*/ 80),
+    );
+    let normalized_transcript = transcript.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized_transcript.contains(raw_cmd),
+        "expected transcript to keep raw location-wrapped git command, got {transcript}"
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+}
+
+#[tokio::test]
 async fn powershell_exec_renders_semantic_ffmpeg_probe_and_keeps_raw_transcript() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let raw_cmd = "$out='C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\frames'; New-Item -ItemType Directory -Force -Path $out | Out-Null; ffmpeg -hide_banner -loglevel error -i 'C:\\Users\\Keenu\\KeenuProjects\\screen_care_simulator\\.tmp\\tweet-video.mp4' -vf \"fps=1/10,scale=480:-1\" \"$out\\frame-%02d.jpg\"; Get-ChildItem $out | Select-Object -ExpandProperty Name";

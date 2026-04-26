@@ -11,6 +11,10 @@ use crate::powershell_exploration::summarize_known_exploration_script;
 use crate::powershell_line_range::summarize_line_range_preview;
 use crate::powershell_parser::PowershellParseOutcome;
 use crate::powershell_parser::parse_with_powershell_ast;
+use crate::powershell_syntax::split_command_tokens;
+use crate::powershell_syntax::split_pipeline_parts;
+use crate::powershell_syntax::split_top_level_statements;
+use crate::powershell_syntax::strip_wrapping_parens;
 
 pub(crate) fn parse_powershell_script(
     executable: Option<&str>,
@@ -36,9 +40,17 @@ pub(crate) fn parse_powershell_script(
     }
 
     let Some(parts) = split_parts(script) else {
-        return vec![unknown(script)];
+        return summarize_top_level_last_commands(script).unwrap_or_else(|| vec![unknown(script)]);
     };
-    summarize_parts(script, parts.into_iter().map(|part| part.tokens).collect())
+    let commands = summarize_parts(script, parts.into_iter().map(|part| part.tokens).collect());
+    if commands
+        .iter()
+        .any(|command| matches!(command, ParsedCommand::Unknown { .. }))
+        && let Some(fallback) = summarize_top_level_last_commands(script)
+    {
+        return fallback;
+    }
+    commands
 }
 
 fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> {
@@ -49,6 +61,7 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
     let mut variables: HashMap<String, String> = HashMap::new();
     let mut command_result_variables: HashMap<String, ParsedCommand> = HashMap::new();
     let mut pending_wrapping_closes = 0;
+    let mut last_location_action = None;
 
     for raw_tokens in parts {
         let tokens = normalize_part_tokens(raw_tokens, &variables, &mut pending_wrapping_closes);
@@ -82,6 +95,7 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
                     None => path,
                 });
             }
+            last_location_action = Some(location_action(&tokens));
             prior_list_path = None;
             continue;
         }
@@ -93,11 +107,13 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
                     None => path,
                 });
             }
+            last_location_action = Some(location_action(&tokens));
             prior_list_path = None;
             continue;
         }
         if is_pop_location(&head_lower, tail) {
             cwd = cwd_stack.pop().unwrap_or(None);
+            last_location_action = Some(location_action(&tokens));
             prior_list_path = None;
             continue;
         }
@@ -123,10 +139,155 @@ fn summarize_parts(script: &str, parts: Vec<Vec<String>>) -> Vec<ParsedCommand> 
     }
 
     if out.is_empty() {
+        if let Some(action) = last_location_action {
+            return vec![action];
+        }
         return vec![unknown(script)];
     }
 
     simplify_powershell_commands(out)
+}
+
+fn summarize_top_level_last_commands(script: &str) -> Option<Vec<ParsedCommand>> {
+    let statements = split_top_level_statements(script)?;
+    let mut out = Vec::new();
+    let mut cwd: Option<String> = None;
+    let mut cwd_stack: Vec<Option<String>> = Vec::new();
+    let mut prior_list_path: Option<String> = None;
+    let mut last_location_action = None;
+
+    for statement in statements {
+        if let Some(tokens) = split_command_tokens(strip_wrapping_parens(statement.trim())) {
+            let Some((head, tail)) = tokens.split_first() else {
+                continue;
+            };
+            let head_lower = head.to_ascii_lowercase();
+            if is_set_location(&head_lower) {
+                if let Some(path) = path_operand(tail) {
+                    cwd = Some(match cwd.as_deref() {
+                        Some(base) => join_paths(base, &path),
+                        None => path,
+                    });
+                }
+                last_location_action = Some(location_action(&tokens));
+                prior_list_path = None;
+                continue;
+            }
+            if is_push_location(&head_lower) {
+                cwd_stack.push(cwd.clone());
+                if let Some(path) = path_operand(tail) {
+                    cwd = Some(match cwd.as_deref() {
+                        Some(base) => join_paths(base, &path),
+                        None => path,
+                    });
+                }
+                last_location_action = Some(location_action(&tokens));
+                prior_list_path = None;
+                continue;
+            }
+            if is_pop_location(&head_lower, tail) {
+                cwd = cwd_stack.pop().unwrap_or(None);
+                last_location_action = Some(location_action(&tokens));
+                prior_list_path = None;
+                continue;
+            }
+            if simple_variable_assignment(&tokens).is_some() {
+                prior_list_path = None;
+                continue;
+            }
+        } else if is_here_string_assignment(&statement) {
+            prior_list_path = None;
+            continue;
+        }
+
+        let parsed = summarize_pipeline_last_command(&statement)?;
+        let parsed = apply_context_to_parsed(parsed, cwd.as_deref(), &mut prior_list_path);
+        if matches!(parsed, ParsedCommand::Unknown { .. }) {
+            return None;
+        }
+        out.push(parsed);
+    }
+
+    if out.is_empty() {
+        return last_location_action.map(|action| vec![action]);
+    }
+
+    Some(simplify_powershell_commands(out))
+}
+
+fn summarize_pipeline_last_command(statement: &str) -> Option<ParsedCommand> {
+    let mut parsed = None;
+    for part in split_pipeline_parts(statement)? {
+        let trimmed = strip_wrapping_parens(part.trim());
+        let Some(tokens) = split_command_tokens(trimmed) else {
+            if is_pipeline_input_expression(trimmed) {
+                continue;
+            }
+            return None;
+        };
+        if tokens.is_empty() {
+            continue;
+        }
+        let Some((head, tail)) = tokens.split_first() else {
+            continue;
+        };
+        let head_lower = head.to_ascii_lowercase();
+        if is_formatting_helper(&head_lower, tail) {
+            continue;
+        }
+        if is_safe_setup_helper(&head_lower, tail) {
+            continue;
+        }
+        if is_mutating_or_ambiguous(&head_lower) {
+            if is_mutating_command(&head_lower) {
+                return Some(edit_action(&ps_join(&tokens)));
+            }
+            return None;
+        }
+        let next = summarize_tokens(&tokens);
+        if matches!(next, ParsedCommand::Unknown { .. }) {
+            if is_pipeline_input_expression(trimmed) {
+                continue;
+            }
+            return None;
+        }
+        parsed = Some(next);
+    }
+    parsed
+}
+
+fn location_action(tokens: &[String]) -> ParsedCommand {
+    let cmd = ps_join(tokens);
+    ParsedCommand::Action {
+        cmd: cmd.clone(),
+        kind: ParsedCommandActionKind::Run,
+        detail: Some(cmd),
+    }
+}
+
+fn is_here_string_assignment(statement: &str) -> bool {
+    let trimmed = statement.trim_start();
+    trimmed.starts_with('$') && (trimmed.contains("=@'") || trimmed.contains("= @'"))
+        || trimmed.starts_with('$') && (trimmed.contains("=@\"") || trimmed.contains("= @\""))
+}
+
+fn is_pipeline_input_expression(value: &str) -> bool {
+    let trimmed = value.trim();
+    is_here_string_literal(trimmed)
+        || quoted_literal(trimmed)
+        || simple_variable_name(trimmed).is_some()
+}
+
+fn is_here_string_literal(value: &str) -> bool {
+    let trimmed = value.trim();
+    (trimmed.starts_with("@'") && trimmed.ends_with("'@"))
+        || (trimmed.starts_with("@\"") && trimmed.ends_with("\"@"))
+}
+
+fn quoted_literal(value: &str) -> bool {
+    value.len() >= 2
+        && (value.starts_with('\'') && value.ends_with('\'')
+            || value.starts_with('"') && value.ends_with('"'))
 }
 
 fn apply_context_to_parsed(
@@ -594,9 +755,9 @@ fn summarize_git(tokens: &[String], args: &[String]) -> ParsedCommand {
                 .collect(),
             ),
         },
-        _ => ParsedCommand::Unknown {
+        _ => action_from_tokens(tokens).unwrap_or_else(|| ParsedCommand::Unknown {
             cmd: ps_join(tokens),
-        },
+        }),
     }
 }
 

@@ -1,0 +1,5 @@
+---
+source: tui/src/chatwidget/tests/exec_flow.rs
+expression: active
+---
+• Checking git git show :src/engine/duel.ts

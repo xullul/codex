@@ -1498,6 +1498,19 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_content_line_range_with_range_variable_is_read() {
+        let script = "$p='src\\engine\\duel.ts'; $lines=Get-Content -LiteralPath $p; $range=5028..5046; foreach ($i in $range) { if ($i -le $lines.Count) { '{0}:{1}' -f $i, $lines[$i-1] } }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"src\\\\engine\\\\duel.ts\"".to_string(),
+                name: "duel.ts".to_string(),
+                path: PathBuf::from("src\\engine\\duel.ts"),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_arbitrary_foreach_stays_unknown() {
         let script = "$p='src\\effect-query.ts'; $lines=Get-Content $p; foreach ($i in 40..80) { Remove-Item $p; '{0}:{1}' -f $i, $lines[$i-1] }";
         assert_parsed(
@@ -1933,6 +1946,61 @@ mod tests {
                 path: PathBuf::from("codex-rs/Cargo.toml"),
             }],
         );
+    }
+
+    #[test]
+    fn powershell_location_wrapped_git_actions_are_semantic() {
+        for script in [
+            "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git show :src/engine/duel.ts | Select-Object -Skip 5028 -First 18",
+            "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git diff --cached -- src/engine/duel.ts",
+            "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git diff --cached --stat",
+            "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git status --short",
+            "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git status --short; Pop-Location",
+            "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; @'\ndiff --git a/src/engine/duel.ts b/src/engine/duel.ts\n-    return rejectAction('invalid-actor', 'old', state);\n+    return rejectAction('invalid-actor', 'new', state);\n'@ | git apply",
+        ] {
+            let parsed = parse_command(&vec_str(&["pwsh", "-NoProfile", "-Command", script]));
+            assert!(
+                !matches!(parsed.as_slice(), [ParsedCommand::Unknown { .. }]),
+                "expected semantic PowerShell git action, got {parsed:?}"
+            );
+            assert_eq!(
+                parsed
+                    .iter()
+                    .map(|cmd| match cmd {
+                        ParsedCommand::Action { kind, .. } => kind,
+                        other => panic!("expected git action, got {other:?}"),
+                    })
+                    .collect::<Vec<_>>(),
+                vec![&ParsedCommandActionKind::Git],
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_standalone_location_commands_are_actions() {
+        for script in [
+            "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'",
+            "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'",
+            "Pop-Location",
+        ] {
+            let parsed = parse_command(&vec_str(&["pwsh", "-NoProfile", "-Command", script]));
+            let [ParsedCommand::Action { kind, detail, .. }] = parsed.as_slice() else {
+                panic!("expected location action, got {parsed:?}");
+            };
+            assert_eq!(kind, &ParsedCommandActionKind::Run);
+            assert!(
+                detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.to_ascii_lowercase().starts_with(
+                        &script
+                            .split_whitespace()
+                            .next()
+                            .unwrap()
+                            .to_ascii_lowercase()
+                    )),
+                "expected location action detail, got {parsed:?}"
+            );
+        }
     }
 
     #[test]
@@ -2867,9 +2935,9 @@ fn summarize_main_tokens(main_cmd: &[String]) -> ParsedCommand {
                     path,
                 }
             }
-            _ => ParsedCommand::Unknown {
+            _ => action_from_tokens(main_cmd).unwrap_or_else(|| ParsedCommand::Unknown {
                 cmd: shlex_join(main_cmd),
-            },
+            }),
         },
         Some((head, tail)) if head == "fd" => {
             let (query, path) = parse_fd_query_and_path(tail);

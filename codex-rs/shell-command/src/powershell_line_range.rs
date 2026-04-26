@@ -26,20 +26,32 @@ pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand
         statements.pop();
     }
 
-    let (path_binding, lines_assignment, loop_statement) = match statements.as_slice() {
-        [lines_assignment, loop_statement] => {
-            (None, lines_assignment.as_str(), loop_statement.as_str())
+    let mut remaining = statements.as_slice();
+    let path_binding = match remaining {
+        [path_assignment, lines_assignment, ..]
+            if get_content_assignment(lines_assignment).is_some() =>
+        {
+            remaining = &remaining[1..];
+            Some(literal_variable_assignment(path_assignment)?)
         }
-        [path_assignment, lines_assignment, loop_statement] => (
-            Some(literal_variable_assignment(path_assignment)?),
-            lines_assignment.as_str(),
+        _ => None,
+    };
+
+    let [lines_assignment, rest @ ..] = remaining else {
+        return None;
+    };
+    let (lines_var, read_target) = get_content_assignment(lines_assignment)?;
+
+    let (range_binding, loop_statement) = match rest {
+        [loop_statement] => (None, loop_statement.as_str()),
+        [range_assignment, loop_statement] => (
+            Some(numeric_range_variable_assignment(range_assignment)?),
             loop_statement.as_str(),
         ),
         _ => return None,
     };
 
-    let (lines_var, read_target) = get_content_assignment(lines_assignment)?;
-    if !is_line_range_preview_loop(loop_statement, &lines_var) {
+    if !is_line_range_preview_loop(loop_statement, &lines_var, range_binding.as_deref()) {
         return None;
     }
     let path = apply_cwd_to_path(
@@ -133,6 +145,12 @@ fn literal_variable_assignment(statement: &str) -> Option<(String, String)> {
         assignment_name(lhs.trim())?,
         powershell_literal(rhs.trim())?,
     ))
+}
+
+fn numeric_range_variable_assignment(statement: &str) -> Option<String> {
+    let (lhs, rhs) = split_assignment(statement)?;
+    let variable = assignment_name(lhs.trim())?;
+    is_range_expression(rhs.trim()).then_some(variable)
 }
 
 fn get_content_assignment(statement: &str) -> Option<(String, ReadTarget)> {
@@ -290,7 +308,11 @@ fn flag_consumes_next_value(flag: &str) -> bool {
     )
 }
 
-fn is_line_range_preview_loop(statement: &str, lines_var: &str) -> bool {
+fn is_line_range_preview_loop(
+    statement: &str,
+    lines_var: &str,
+    range_binding: Option<&str>,
+) -> bool {
     if let Some((loop_var, range_var, body)) = parse_multi_range_loop(statement, lines_var) {
         return is_line_range_loop_body(&body, &loop_var, lines_var)
             && variable_references(statement)
@@ -298,21 +320,34 @@ fn is_line_range_preview_loop(statement: &str, lines_var: &str) -> bool {
                 .all(|name| name == lines_var || name == loop_var || name == range_var);
     }
 
-    let Some((loop_var, body)) = parse_line_range_loop(statement, lines_var) else {
+    let Some((loop_var, foreach_range_var, body)) =
+        parse_line_range_loop(statement, lines_var, range_binding)
+    else {
         return false;
     };
     is_line_range_loop_body(&body, &loop_var, lines_var)
-        && variable_references(statement)
-            .into_iter()
-            .all(|name| name == lines_var || name == loop_var)
+        && variable_references(statement).into_iter().all(|name| {
+            name == lines_var
+                || name == loop_var
+                || foreach_range_var
+                    .as_deref()
+                    .is_some_and(|range_var| name == range_var)
+        })
 }
 
-fn parse_line_range_loop(statement: &str, lines_var: &str) -> Option<(String, String)> {
+fn parse_line_range_loop(
+    statement: &str,
+    lines_var: &str,
+    range_binding: Option<&str>,
+) -> Option<(String, Option<String>, String)> {
     parse_keyword_loop(statement, "foreach")
-        .and_then(|(header, body)| foreach_range_variable(&header).map(|var| (var, body)))
+        .and_then(|(header, body)| {
+            foreach_range_variable(&header, range_binding)
+                .map(|(loop_var, range_var)| (loop_var, range_var, body))
+        })
         .or_else(|| {
             parse_keyword_loop(statement, "for").and_then(|(header, body)| {
-                for_range_variable(&header, lines_var).map(|var| (var, body))
+                for_range_variable(&header, lines_var).map(|var| (var, None, body))
             })
         })
 }
@@ -344,14 +379,24 @@ fn parse_keyword_loop(statement: &str, keyword: &str) -> Option<(String, String)
         .then(|| (header, rest[1..body_end].trim().to_string()))
 }
 
-fn foreach_range_variable(header: &str) -> Option<String> {
+fn foreach_range_variable(
+    header: &str,
+    range_binding: Option<&str>,
+) -> Option<(String, Option<String>)> {
     let mut parts = header.split_whitespace();
     let variable = parts.next().and_then(simple_variable_name)?;
     if !parts.next()?.eq_ignore_ascii_case("in") {
         return None;
     }
     let range = parts.next()?;
-    (parts.next().is_none() && is_numeric_range(range)).then_some(variable)
+    if parts.next().is_some() {
+        return None;
+    }
+    if is_range_expression(range) {
+        return Some((variable, None));
+    }
+    let range_var = simple_variable_name(range)?;
+    (range_binding == Some(range_var.as_str())).then_some((variable, Some(range_var)))
 }
 
 fn foreach_tuple_ranges_variable(header: &str) -> Option<String> {
@@ -472,6 +517,20 @@ fn is_numeric_range(value: &str) -> bool {
         && !end.is_empty()
         && start.chars().all(|ch| ch.is_ascii_digit())
         && end.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_range_expression(value: &str) -> bool {
+    let compact = remove_ascii_whitespace(value);
+    let range = compact
+        .strip_prefix("@(")
+        .and_then(|value| value.strip_suffix(')'))
+        .or_else(|| {
+            compact
+                .strip_prefix('(')
+                .and_then(|value| value.strip_suffix(')'))
+        })
+        .unwrap_or(&compact);
+    is_numeric_range(range)
 }
 
 fn is_line_range_loop_body(body: &str, loop_var: &str, lines_var: &str) -> bool {
