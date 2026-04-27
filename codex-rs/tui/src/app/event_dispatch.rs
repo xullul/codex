@@ -1245,6 +1245,11 @@ impl App {
                 )
                 .await;
             }
+            AppEvent::UpdateSubagentConfig {
+                exploration_subagents,
+            } => {
+                self.update_subagent_config(exploration_subagents).await;
+            }
             AppEvent::ResetMemories => {
                 self.reset_memories_with_app_server(app_server).await;
             }

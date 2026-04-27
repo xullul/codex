@@ -52,6 +52,7 @@ use codex_config::types::UriBasedFileOpener;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
+use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::Feature;
 use codex_features::FeatureConfigSource;
 use codex_features::FeatureOverrides;
@@ -650,6 +651,29 @@ impl Default for MultiAgentV2Config {
             usage_hint_text: None,
             hide_spawn_agent_metadata: false,
         }
+    }
+}
+
+impl MultiAgentV2Config {
+    pub fn exploration_subagents_config_toml(&self) -> ExplorationSubagentsConfigToml {
+        match self.exploration_subagents_policy {
+            ExplorationSubagentsPolicy::Prefer => ExplorationSubagentsConfigToml::Prefer,
+            ExplorationSubagentsPolicy::Auto => ExplorationSubagentsConfigToml::Auto,
+            ExplorationSubagentsPolicy::Less => ExplorationSubagentsConfigToml::Less,
+            ExplorationSubagentsPolicy::Disable => ExplorationSubagentsConfigToml::Disable,
+        }
+    }
+
+    pub fn set_exploration_subagents_config_toml(&mut self, value: ExplorationSubagentsConfigToml) {
+        self.exploration_subagents_policy = ExplorationSubagentsPolicy::from(value);
+    }
+
+    pub fn exploration_subagents_config_value(&self) -> &'static str {
+        self.exploration_subagents_policy.config_value()
+    }
+
+    pub fn exploration_subagents_label(&self) -> &'static str {
+        self.exploration_subagents_policy.label()
     }
 }
 
@@ -1499,7 +1523,7 @@ fn resolve_web_search_config(
     }
 }
 
-fn resolve_multi_agent_v2_config(
+pub(crate) fn resolve_multi_agent_v2_config(
     config_toml: &ConfigToml,
     config_profile: &ConfigProfile,
 ) -> MultiAgentV2Config {

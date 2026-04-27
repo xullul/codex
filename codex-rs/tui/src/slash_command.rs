@@ -33,6 +33,8 @@ pub enum SlashCommand {
     Plan,
     Collab,
     Agent,
+    #[strum(to_string = "subagent-config", serialize = "subagents-config")]
+    SubagentConfig,
     Side,
     // Undo,
     Copy,
@@ -106,6 +108,7 @@ impl SlashCommand {
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
+            SlashCommand::SubagentConfig => "configure subagent delegation preferences",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
@@ -193,6 +196,7 @@ impl SlashCommand {
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Side => true,
+            SlashCommand::SubagentConfig => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,
@@ -238,5 +242,18 @@ mod tests {
     #[test]
     fn clean_alias_parses_to_stop_command() {
         assert_eq!(SlashCommand::from_str("clean"), Ok(SlashCommand::Stop));
+    }
+
+    #[test]
+    fn subagent_config_command_is_canonical_name() {
+        assert_eq!(SlashCommand::SubagentConfig.command(), "subagent-config");
+    }
+
+    #[test]
+    fn subagents_config_alias_parses_to_subagent_config_command() {
+        assert_eq!(
+            SlashCommand::from_str("subagents-config"),
+            Ok(SlashCommand::SubagentConfig)
+        );
     }
 }

@@ -65,10 +65,9 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(description.contains("The spawned agent will have the same tools as you"));
     assert!(description.contains("`max_concurrent_threads_per_session = 4`"));
     assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
-    assert!(
-        description
-            .contains("Use `explorer` subagents for large, independent repository discovery.")
-    );
+    assert!(description.contains(
+        "Use `explorer` subagents proactively for large or multi-topic repository discovery"
+    ));
     assert!(
         description
             .contains("Available model overrides (optional; inherited parent model is preferred):")
@@ -139,11 +138,11 @@ fn spawn_agent_tool_v1_renders_exploration_policy_guidance() {
     for (policy, expected) in [
         (
             ExplorationSubagentsPolicy::Prefer,
-            "Prefer `explorer` subagents for nontrivial repository discovery",
+            "Default to `explorer` subagents for read-only repository discovery",
         ),
         (
             ExplorationSubagentsPolicy::Auto,
-            "Use `explorer` subagents for large, independent repository discovery",
+            "Use `explorer` subagents proactively for large or multi-topic repository discovery",
         ),
         (
             ExplorationSubagentsPolicy::Less,

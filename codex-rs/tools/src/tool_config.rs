@@ -59,13 +59,31 @@ impl From<ExplorationSubagentsConfigToml> for ExplorationSubagentsPolicy {
 }
 
 impl ExplorationSubagentsPolicy {
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::Prefer => "prefer",
+            Self::Auto => "auto",
+            Self::Less => "less",
+            Self::Disable => "disable",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Prefer => "Prefer",
+            Self::Auto => "Auto",
+            Self::Less => "Less",
+            Self::Disable => "Disable",
+        }
+    }
+
     pub fn usage_guidance(self) -> &'static str {
         match self {
             Self::Prefer => {
-                "### Exploration subagents\n- Prefer `explorer` subagents for nontrivial repository discovery, especially when there are multiple independent codebase questions.\n- Keep urgent blocking exploration local when spawning would stop immediate progress."
+                "### Exploration subagents\n- Default to `explorer` subagents for read-only repository discovery that can be separated from the immediate edit path, especially when exploring multiple areas or a large unfamiliar codebase.\n- Keep the main context small: ask explorers for concise findings, relevant file paths, and risks instead of copying broad file contents into the parent thread.\n- Keep urgent blocking exploration local only when waiting for a subagent would stop immediate progress."
             }
             Self::Auto => {
-                "### Exploration subagents\n- Use `explorer` subagents for large, independent repository discovery.\n- Keep small or immediately blocking exploration local."
+                "### Exploration subagents\n- Use `explorer` subagents proactively for large or multi-topic repository discovery, even when the user did not explicitly ask for delegation.\n- Delegate read-only side investigations that would otherwise require opening many files in the parent thread.\n- Keep small, targeted, or immediately blocking exploration local."
             }
             Self::Less => {
                 "### Exploration subagents\n- Only use `explorer` subagents when the user explicitly asks for agents, delegation, or parallel work."

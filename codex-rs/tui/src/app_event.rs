@@ -35,6 +35,7 @@ use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
 use codex_config::types::ApprovalsReviewer;
+use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::Feature;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::config_types::CollaborationModeMask;
@@ -527,6 +528,11 @@ pub(crate) enum AppEvent {
     UpdateMemorySettings {
         use_memories: bool,
         generate_memories: bool,
+    },
+
+    /// Update subagent delegation settings and persist them to config.toml.
+    UpdateSubagentConfig {
+        exploration_subagents: ExplorationSubagentsConfigToml,
     },
 
     /// Clear all persisted local memory artifacts via the app-server.

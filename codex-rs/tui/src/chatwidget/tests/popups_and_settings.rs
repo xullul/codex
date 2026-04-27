@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol::AppInfo;
+use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::Stage;
 use pretty_assertions::assert_eq;
 
@@ -1798,6 +1799,32 @@ async fn multi_agent_enable_prompt_updates_feature_and_emits_notice() {
     };
     let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 120));
     assert!(rendered.contains("Subagents will be enabled in the next session."));
+}
+
+#[tokio::test]
+async fn subagent_config_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.open_subagent_config_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("subagent_config_popup", popup);
+}
+
+#[tokio::test]
+async fn subagent_config_popup_sends_selected_policy() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.open_subagent_config_popup();
+    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::UpdateSubagentConfig {
+            exploration_subagents: ExplorationSubagentsConfigToml::Prefer
+        })
+    );
 }
 
 #[tokio::test]

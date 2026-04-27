@@ -113,6 +113,7 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::Notifications;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_core_skills::model::SkillMetadata;
+use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::FEATURES;
 use codex_features::Feature;
 #[cfg(test)]
@@ -2799,6 +2800,65 @@ impl ChatWidget {
         });
     }
 
+    pub(crate) fn open_subagent_config_popup(&mut self) {
+        let current = self
+            .config
+            .multi_agent_v2
+            .exploration_subagents_config_toml();
+        let options = [
+            (
+                ExplorationSubagentsConfigToml::Prefer,
+                "Prefer",
+                "Default to explorer subagents for read-only repository discovery.",
+            ),
+            (
+                ExplorationSubagentsConfigToml::Auto,
+                "Auto",
+                "Use explorer subagents for large or multi-topic repository discovery.",
+            ),
+            (
+                ExplorationSubagentsConfigToml::Less,
+                "Less",
+                "Use explorer subagents only when explicitly requested.",
+            ),
+            (
+                ExplorationSubagentsConfigToml::Disable,
+                "Disable",
+                "Do not proactively use explorer subagents for codebase discovery.",
+            ),
+        ];
+        let initial_selected_idx = options.iter().position(|(policy, _, _)| *policy == current);
+        let items = options
+            .into_iter()
+            .map(|(policy, name, description)| {
+                let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                    tx.send(AppEvent::UpdateSubagentConfig {
+                        exploration_subagents: policy,
+                    });
+                })];
+                SelectionItem {
+                    name: name.to_string(),
+                    description: Some(description.to_string()),
+                    is_current: policy == current,
+                    actions,
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Subagent Configuration".to_string()),
+            subtitle: Some(
+                "Choose how proactively Codex delegates codebase exploration.".to_string(),
+            ),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            initial_selected_idx,
+            ..Default::default()
+        });
+    }
+
     pub(crate) fn open_memories_popup(&mut self) {
         if !self.config.features.enabled(Feature::MemoryTool) {
             self.open_memories_enable_prompt();
@@ -2852,6 +2912,15 @@ impl ChatWidget {
     pub(crate) fn set_memory_settings(&mut self, use_memories: bool, generate_memories: bool) {
         self.config.memories.use_memories = use_memories;
         self.config.memories.generate_memories = generate_memories;
+    }
+
+    pub(crate) fn set_subagent_config(
+        &mut self,
+        exploration_subagents: ExplorationSubagentsConfigToml,
+    ) {
+        self.config
+            .multi_agent_v2
+            .set_exploration_subagents_config_toml(exploration_subagents);
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {

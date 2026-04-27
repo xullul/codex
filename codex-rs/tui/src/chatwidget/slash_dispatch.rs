@@ -217,6 +217,9 @@ impl ChatWidget {
             SlashCommand::Agent | SlashCommand::MultiAgents => {
                 self.app_event_tx.send(AppEvent::OpenAgentPicker);
             }
+            SlashCommand::SubagentConfig => {
+                self.open_subagent_config_popup();
+            }
             SlashCommand::Approvals => {
                 self.open_permissions_popup();
             }
@@ -749,6 +752,7 @@ impl ChatWidget {
             | SlashCommand::Side
             | SlashCommand::Agent
             | SlashCommand::MultiAgents
+            | SlashCommand::SubagentConfig
             | SlashCommand::Approvals
             | SlashCommand::Permissions
             | SlashCommand::ElevateSandbox

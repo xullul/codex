@@ -1,0 +1,16 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+expression: popup
+---
+  Subagent Configuration
+  Choose how proactively Codex delegates codebase exploration.
+
+  1. Prefer          Default to explorer subagents for read-only repository
+                     discovery.
+› 2. Auto (current)  Use explorer subagents for large or multi-topic
+                     repository discovery.
+  3. Less            Use explorer subagents only when explicitly requested.
+  4. Disable         Do not proactively use explorer subagents for codebase
+                     discovery.
+
+  Press enter to confirm or esc to go back

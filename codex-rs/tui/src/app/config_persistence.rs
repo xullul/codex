@@ -462,6 +462,66 @@ impl App {
         }
     }
 
+    pub(super) async fn update_subagent_config(
+        &mut self,
+        exploration_subagents: ExplorationSubagentsConfigToml,
+    ) {
+        let active_profile = self.active_profile.clone();
+        let scoped_segments = |key: &str| {
+            if let Some(profile) = active_profile.as_deref() {
+                vec![
+                    "profiles".to_string(),
+                    profile.to_string(),
+                    "features".to_string(),
+                    "multi_agent_v2".to_string(),
+                    key.to_string(),
+                ]
+            } else {
+                vec![
+                    "features".to_string(),
+                    "multi_agent_v2".to_string(),
+                    key.to_string(),
+                ]
+            }
+        };
+        let enabled = self.config.features.enabled(Feature::MultiAgentV2);
+        let mut next_multi_agent_v2 = self.config.multi_agent_v2.clone();
+        next_multi_agent_v2.set_exploration_subagents_config_toml(exploration_subagents);
+        let policy_value = next_multi_agent_v2.exploration_subagents_config_value();
+        let edits = [
+            ConfigEdit::SetPath {
+                segments: scoped_segments("enabled"),
+                value: enabled.into(),
+            },
+            ConfigEdit::SetPath {
+                segments: scoped_segments("exploration_subagents"),
+                value: policy_value.into(),
+            },
+        ];
+
+        if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits(edits)
+            .apply()
+            .await
+        {
+            tracing::error!(error = %err, "failed to persist subagent config");
+            self.chat_widget
+                .add_error_message(format!("Failed to save subagent configuration: {err}"));
+            return;
+        }
+
+        self.config.multi_agent_v2 = next_multi_agent_v2;
+        self.chat_widget.set_subagent_config(exploration_subagents);
+        self.chat_widget.submit_op(AppCommand::reload_user_config());
+        self.chat_widget.add_info_message(
+            format!(
+                "Subagent exploration preference updated to {}.",
+                self.config.multi_agent_v2.exploration_subagents_label()
+            ),
+            /*hint*/ None,
+        );
+    }
+
     pub(super) async fn reset_memories_with_app_server(
         &mut self,
         app_server: &mut AppServerSession,

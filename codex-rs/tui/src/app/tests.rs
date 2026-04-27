@@ -55,6 +55,7 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput as AppServerUserInput;
 use codex_app_server_protocol::WarningNotification;
+use codex_features::ExplorationSubagentsConfigToml;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
@@ -1530,6 +1531,51 @@ async fn update_memory_settings_persists_and_updates_widget_config() -> Result<(
         "the TUI menu should not write the external-context memory setting"
     );
     app_server.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_subagent_config_persists_updates_widget_and_reloads_session() -> Result<()> {
+    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let codex_home = tempdir()?;
+    app.config.codex_home = codex_home.path().to_path_buf().abs();
+    let enabled = app.config.features.enabled(Feature::MultiAgentV2);
+
+    app.update_subagent_config(ExplorationSubagentsConfigToml::Prefer)
+        .await;
+
+    assert_eq!(
+        app.config
+            .multi_agent_v2
+            .exploration_subagents_config_toml(),
+        ExplorationSubagentsConfigToml::Prefer
+    );
+    assert_eq!(
+        app.chat_widget
+            .config_ref()
+            .multi_agent_v2
+            .exploration_subagents_config_toml(),
+        ExplorationSubagentsConfigToml::Prefer
+    );
+
+    let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
+    let config_value = toml::from_str::<TomlValue>(&config)?;
+    let multi_agent_v2 = config_value
+        .as_table()
+        .and_then(|table| table.get("features"))
+        .and_then(TomlValue::as_table)
+        .and_then(|features| features.get("multi_agent_v2"))
+        .and_then(TomlValue::as_table)
+        .expect("multi_agent_v2 table should exist");
+    assert_eq!(
+        multi_agent_v2.get("enabled"),
+        Some(&TomlValue::Boolean(enabled))
+    );
+    assert_eq!(
+        multi_agent_v2.get("exploration_subagents"),
+        Some(&TomlValue::String("prefer".to_string()))
+    );
+    assert_eq!(op_rx.try_recv(), Ok(Op::ReloadUserConfig));
     Ok(())
 }
 

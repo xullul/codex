@@ -1393,6 +1393,25 @@ impl Session {
         config.config_layer_stack = config
             .config_layer_stack
             .with_user_config(&config_toml_path, user_config);
+        let effective_config = config.config_layer_stack.effective_config();
+        match crate::config::deserialize_config_toml_with_base(
+            effective_config,
+            config.codex_home.as_path(),
+        )
+        .and_then(|config_toml| {
+            let config_profile = config_toml.get_config_profile(config.active_profile.clone())?;
+            Ok(crate::config::resolve_multi_agent_v2_config(
+                &config_toml,
+                &config_profile,
+            ))
+        }) {
+            Ok(multi_agent_v2) => {
+                config.multi_agent_v2 = multi_agent_v2;
+            }
+            Err(err) => {
+                warn!("failed to refresh multi-agent config while reloading user config: {err}");
+            }
+        }
         state.session_configuration.original_config_do_not_use = Arc::new(config);
         self.services.skills_manager.clear_cache();
         self.services.plugins_manager.clear_cache();

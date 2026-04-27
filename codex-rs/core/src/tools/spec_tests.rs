@@ -790,11 +790,11 @@ async fn spawn_agent_description_renders_exploration_subagent_policy() {
     for (policy, expected) in [
         (
             ExplorationSubagentsPolicy::Prefer,
-            "Prefer `explorer` subagents for nontrivial repository discovery",
+            "Default to `explorer` subagents for read-only repository discovery",
         ),
         (
             ExplorationSubagentsPolicy::Auto,
-            "Use `explorer` subagents for large, independent repository discovery",
+            "Use `explorer` subagents proactively for large or multi-topic repository discovery",
         ),
         (
             ExplorationSubagentsPolicy::Less,

@@ -154,7 +154,6 @@ mod shimmer;
 mod skills_helpers;
 mod slash_command;
 mod status;
-mod status_indicator_busy_face;
 mod status_indicator_widget;
 mod streaming;
 mod style;
