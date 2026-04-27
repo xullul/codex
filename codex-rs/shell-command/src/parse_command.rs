@@ -1663,6 +1663,53 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_child_item_select_string_projection_is_search() {
+        let script = r#"Get-ChildItem -Path frontend\src -Recurse -File -Include *.tsx,*.ts,*.css,*.scss | Select-String -Pattern 'position: absolute' -SimpleMatch:$false | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }"#;
+        let parsed = parse_command(&vec_str(&["pwsh", "-NoProfile", "-Command", script]));
+
+        assert_eq!(parsed.len(), 1);
+        let [ParsedCommand::Search { query, path, .. }] = parsed.as_slice() else {
+            panic!("expected search, got {parsed:?}");
+        };
+        assert_eq!(query.as_deref(), Some("position: absolute"));
+        assert_eq!(path.as_deref(), Some("frontend"));
+    }
+
+    #[test]
+    fn powershell_select_string_literal_path_projection_is_search() {
+        let script = r#"Select-String -LiteralPath 'frontend\src\routes\_authenticated\disposal\$id.tsx' -Pattern 'top:' | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }"#;
+        let parsed = parse_command(&vec_str(&["pwsh", "-NoProfile", "-Command", script]));
+
+        assert_eq!(parsed.len(), 1);
+        let [ParsedCommand::Search { query, path, .. }] = parsed.as_slice() else {
+            panic!("expected search, got {parsed:?}");
+        };
+        assert_eq!(query.as_deref(), Some("top:"));
+        assert_eq!(path.as_deref(), Some("$id.tsx"));
+    }
+
+    #[test]
+    fn powershell_select_string_unsafe_foreach_projection_stays_unknown() {
+        let mutating_script = r#"Select-String -Path src/lib.rs -Pattern TODO | ForEach-Object { Remove-Item $_.Path }"#;
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", mutating_script]),
+            vec![ParsedCommand::Action {
+                cmd: mutating_script.to_string(),
+                kind: ParsedCommandActionKind::Edit,
+                detail: Some(mutating_script.to_string()),
+            }],
+        );
+
+        let assignment_script = r#"Select-String -Path src/lib.rs -Pattern TODO | ForEach-Object { $line = $_.Line; $line }"#;
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", assignment_script]),
+            vec![ParsedCommand::Unknown {
+                cmd: assignment_script.to_string(),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_child_item_is_list() {
         assert_parsed(
             &vec_str(&["pwsh", "-Command", "Get-ChildItem -Path codex-rs -Recurse"]),

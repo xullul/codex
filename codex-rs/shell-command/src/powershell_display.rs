@@ -491,40 +491,49 @@ fn simplify_powershell_commands(mut commands: Vec<ParsedCommand>) -> Vec<ParsedC
 
 fn simplify_powershell_commands_once(commands: &[ParsedCommand]) -> Option<Vec<ParsedCommand>> {
     for (idx, pair) in commands.windows(2).enumerate() {
-        let [
-            ParsedCommand::Read {
-                path: read_path, ..
-            },
-            ParsedCommand::Search {
-                cmd,
-                query,
-                path: search_path,
-            },
-        ] = pair
-        else {
-            continue;
-        };
-
-        let display_path = short_display_path(&read_path.to_string_lossy());
-        let should_merge = match search_path.as_deref() {
-            None => true,
-            Some(existing) => existing == display_path,
-        };
-        if !should_merge {
-            continue;
+        if let Some(merged_search) = simplify_search_source_pair(pair) {
+            let mut merged = Vec::with_capacity(commands.len() - 1);
+            merged.extend_from_slice(&commands[..idx]);
+            merged.push(merged_search);
+            merged.extend_from_slice(&commands[idx + 2..]);
+            return Some(merged);
         }
-
-        let mut merged = Vec::with_capacity(commands.len() - 1);
-        merged.extend_from_slice(&commands[..idx]);
-        merged.push(ParsedCommand::Search {
-            cmd: cmd.clone(),
-            query: query.clone(),
-            path: Some(display_path),
-        });
-        merged.extend_from_slice(&commands[idx + 2..]);
-        return Some(merged);
     }
     None
+}
+
+fn simplify_search_source_pair(pair: &[ParsedCommand]) -> Option<ParsedCommand> {
+    let [
+        source,
+        ParsedCommand::Search {
+            cmd,
+            query,
+            path: search_path,
+        },
+    ] = pair
+    else {
+        return None;
+    };
+
+    let display_path = match source {
+        ParsedCommand::Read {
+            path: read_path, ..
+        } => short_display_path(&read_path.to_string_lossy()),
+        ParsedCommand::ListFiles {
+            path: Some(list_path),
+            ..
+        } => list_path.clone(),
+        _ => return None,
+    };
+    let should_merge = match search_path.as_deref() {
+        None => true,
+        Some(existing) => existing == display_path,
+    };
+    should_merge.then(|| ParsedCommand::Search {
+        cmd: cmd.clone(),
+        query: query.clone(),
+        path: Some(display_path),
+    })
 }
 
 fn strip_utf8_prefix(script: &str) -> &str {
@@ -1211,6 +1220,15 @@ fn is_simple_foreach_projection(cmd: &str, args: &[String]) -> bool {
                         | "$_.line"
                         | "$_.tostring()"
                 )
+                || is_safe_select_string_match_projection(expr)
+    )
+}
+
+fn is_safe_select_string_match_projection(expr: &str) -> bool {
+    matches!(
+        expr,
+        "$($_.path):$($_.linenumber): $($_.line.trim())"
+            | "$($_.path):$($_.linenumber):$($_.line.trim())"
     )
 }
 
