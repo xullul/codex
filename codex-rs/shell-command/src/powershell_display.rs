@@ -8,6 +8,7 @@ use crate::action_classification::action_from_tokens;
 use crate::parse_command::shlex_join;
 use crate::powershell::UTF8_OUTPUT_PREFIX;
 use crate::powershell_exploration::summarize_known_exploration_script;
+use crate::powershell_file_read::summarize_get_child_item_file_read;
 use crate::powershell_line_range::summarize_line_range_preview;
 use crate::powershell_parser::PowershellParseOutcome;
 use crate::powershell_parser::parse_with_powershell_ast;
@@ -29,6 +30,9 @@ pub(crate) fn parse_powershell_script(
     }
 
     if let Some(read) = summarize_line_range_preview(script) {
+        return vec![read];
+    }
+    if let Some(read) = summarize_get_child_item_file_read(script) {
         return vec![read];
     }
     if let Some(command) = summarize_known_exploration_script(script) {

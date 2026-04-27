@@ -1707,6 +1707,65 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_child_item_foreach_get_content_is_read() {
+        let expected_path =
+            PathBuf::from("e-ticket-frontend/src/services").join("signalRService.ts");
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-Command",
+                "Get-ChildItem -Path e-ticket-frontend/src/services -Recurse -File -Include signalRService.ts | ForEach-Object { Get-Content $_.FullName | Select-Object -First 260 }",
+            ]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "signalRService.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_location_get_child_item_foreach_get_content_is_read() {
+        let script = "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\eticket'; Get-ChildItem -Path e-ticket-frontend/src/services -Recurse -File -Include signalRService.ts | ForEach-Object { Get-Content -LiteralPath $_.FullName | Select-Object -First 260 }; Pop-Location";
+        let relative_path =
+            PathBuf::from("e-ticket-frontend/src/services").join("signalRService.ts");
+        let expected_path =
+            PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\eticket").join(relative_path);
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "signalRService.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_variable_get_child_item_foreach_get_content_is_read() {
+        let script = "$root='e-ticket-frontend/src/services'; $file='signalRService.ts'; Get-ChildItem -Path $root -Recurse -File -Include $file | % { gc $_.FullName | select -First 260 }";
+        let expected_path =
+            PathBuf::from("e-ticket-frontend/src/services").join("signalRService.ts");
+        assert_parsed(
+            &vec_str(&["pwsh", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "signalRService.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_command_result_variables_keep_semantic_action() {
         assert_parsed(
             &vec_str(&[

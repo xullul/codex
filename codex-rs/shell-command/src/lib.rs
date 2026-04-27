@@ -9,6 +9,7 @@ pub mod parse_command;
 pub mod powershell;
 pub(crate) mod powershell_display;
 pub(crate) mod powershell_exploration;
+pub(crate) mod powershell_file_read;
 pub(crate) mod powershell_line_range;
 pub(crate) mod powershell_parser;
 pub(crate) mod powershell_projection;
