@@ -109,7 +109,7 @@ use codex_protocol::protocol::TurnStartedEvent;
 use std::time::Duration;
 
 impl App {
-    fn refresh_mcp_startup_expected_servers_from_config(&mut self) {
+    pub(super) fn refresh_mcp_startup_expected_servers_from_config(&mut self) {
         let enabled_config_mcp_servers: Vec<String> = self
             .chat_widget
             .config_ref()
@@ -165,9 +165,6 @@ impl App {
                 {
                     self.chat_widget.dismiss_app_server_request(&request);
                 }
-            }
-            ServerNotification::McpServerStatusUpdated(_) => {
-                self.refresh_mcp_startup_expected_servers_from_config();
             }
             ServerNotification::AccountRateLimitsUpdated(notification) => {
                 self.chat_widget.on_rate_limit_snapshot(Some(
@@ -428,9 +425,11 @@ fn server_notification_thread_target(
             Some(notification.thread_id.as_str())
         }
         ServerNotification::Warning(notification) => notification.thread_id.as_deref(),
+        ServerNotification::McpServerStatusUpdated(notification) => {
+            Some(notification.thread_id.as_str())
+        }
         ServerNotification::GuardianWarning(notification) => Some(notification.thread_id.as_str()),
         ServerNotification::SkillsChanged(_)
-        | ServerNotification::McpServerStatusUpdated(_)
         | ServerNotification::McpServerOauthLoginCompleted(_)
         | ServerNotification::AccountUpdated(_)
         | ServerNotification::AccountRateLimitsUpdated(_)
@@ -1074,6 +1073,8 @@ mod tests {
     use codex_app_server_protocol::GuardianWarningNotification;
     use codex_app_server_protocol::ItemCompletedNotification;
     use codex_app_server_protocol::ItemStartedNotification;
+    use codex_app_server_protocol::McpServerStartupState;
+    use codex_app_server_protocol::McpServerStatusUpdatedNotification;
     use codex_app_server_protocol::ReasoningSummaryTextDeltaNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::Thread;
@@ -1703,5 +1704,39 @@ mod tests {
         let target = server_notification_thread_target(&notification);
 
         assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
+    }
+
+    #[test]
+    fn mcp_server_status_notifications_route_to_threads() {
+        let thread_id = ThreadId::new();
+        let notification =
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: thread_id.to_string(),
+                name: "sentry".to_string(),
+                status: McpServerStartupState::Starting,
+                error: None,
+            });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
+    }
+
+    #[test]
+    fn mcp_server_status_notifications_reject_invalid_thread_ids() {
+        let notification =
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: "not-a-thread-id".to_string(),
+                name: "sentry".to_string(),
+                status: McpServerStartupState::Starting,
+                error: None,
+            });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(
+            target,
+            ServerNotificationThreadTarget::InvalidThreadId("not-a-thread-id".to_string())
+        );
     }
 }

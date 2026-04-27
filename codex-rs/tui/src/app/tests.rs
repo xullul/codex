@@ -3277,7 +3277,7 @@ async fn side_thread_snapshot_skips_session_header_preamble() {
 }
 
 #[tokio::test]
-async fn side_thread_ignores_global_mcp_startup_notifications() {
+async fn side_thread_buffers_mcp_startup_notifications_for_their_thread() {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     while app_event_rx.try_recv().is_ok() {}
     let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
@@ -3286,7 +3286,8 @@ async fn side_thread_ignores_global_mcp_startup_notifications() {
     let parent_thread_id = ThreadId::new();
     let side_thread_id = ThreadId::new();
     app.primary_thread_id = Some(parent_thread_id);
-    app.active_thread_id = Some(side_thread_id);
+    app.ensure_thread_channel(side_thread_id);
+    app.activate_thread_channel(side_thread_id).await;
     app.side_threads
         .insert(side_thread_id, SideThreadState::new(parent_thread_id));
     app.sync_side_thread_ui();
@@ -3295,6 +3296,7 @@ async fn side_thread_ignores_global_mcp_startup_notifications() {
         &app_server,
         codex_app_server_client::AppServerEvent::ServerNotification(
             ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: parent_thread_id.to_string(),
                 name: "sentry".to_string(),
                 status: McpServerStartupState::Failed,
                 error: Some("sentry is not logged in".to_string()),
@@ -3304,6 +3306,48 @@ async fn side_thread_ignores_global_mcp_startup_notifications() {
     .await;
 
     assert!(app_event_rx.try_recv().is_err());
+    let mut active_rx = app.active_thread_rx.take().expect("active thread receiver");
+    assert!(active_rx.try_recv().is_err());
+    app.active_thread_rx = Some(active_rx);
+}
+
+#[tokio::test]
+async fn active_side_thread_handles_matching_mcp_startup_notifications() {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+    let parent_thread_id = ThreadId::new();
+    let side_thread_id = ThreadId::new();
+    app.primary_thread_id = Some(parent_thread_id);
+    app.ensure_thread_channel(side_thread_id);
+    app.activate_thread_channel(side_thread_id).await;
+    app.side_threads
+        .insert(side_thread_id, SideThreadState::new(parent_thread_id));
+    app.sync_side_thread_ui();
+
+    app.handle_app_server_event(
+        &app_server,
+        codex_app_server_client::AppServerEvent::ServerNotification(
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: side_thread_id.to_string(),
+                name: "sentry".to_string(),
+                status: McpServerStartupState::Starting,
+                error: None,
+            }),
+        ),
+    )
+    .await;
+
+    let mut active_rx = app.active_thread_rx.take().expect("active thread receiver");
+    let event = active_rx.try_recv().expect("matching MCP notification");
+    app.active_thread_rx = Some(active_rx);
+    let ThreadBufferedEvent::Notification(ServerNotification::McpServerStatusUpdated(notification)) =
+        event
+    else {
+        panic!("expected routed MCP startup notification");
+    };
+    assert_eq!(notification.thread_id, side_thread_id.to_string());
 }
 
 #[tokio::test]

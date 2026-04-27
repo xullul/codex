@@ -533,7 +533,7 @@ async fn thread_start_emits_mcp_server_status_updated_notifications() -> Result<
         .send_thread_start_request(ThreadStartParams::default())
         .await?;
 
-    let _: ThreadStartResponse = to_response(
+    let response: ThreadStartResponse = to_response(
         timeout(
             DEFAULT_READ_TIMEOUT,
             mcp.read_stream_until_response_message(RequestId::Integer(req_id)),
@@ -570,6 +570,7 @@ async fn thread_start_emits_mcp_server_status_updated_notifications() -> Result<
     assert_eq!(
         starting,
         McpServerStatusUpdatedNotification {
+            thread_id: response.thread.id.clone(),
             name: "optional_broken".to_string(),
             status: McpServerStartupState::Starting,
             error: None,
@@ -602,6 +603,7 @@ async fn thread_start_emits_mcp_server_status_updated_notifications() -> Result<
     let ServerNotification::McpServerStatusUpdated(failed) = failed else {
         anyhow::bail!("unexpected notification variant");
     };
+    assert_eq!(failed.thread_id, response.thread.id);
     assert_eq!(failed.name, "optional_broken");
     assert_eq!(failed.status, McpServerStartupState::Failed);
     assert!(

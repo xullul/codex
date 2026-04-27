@@ -1043,7 +1043,7 @@ async fn powershell_exec_renders_semantic_recursive_search_projection() {
 
     chat.handle_codex_event(Event {
         id: "powershell-recursive-search-begin".to_string(),
-        msg: EventMsg::ExecCommandBegin(begin.clone()),
+        msg: EventMsg::ExecCommandBegin(begin),
     });
 
     let active = active_blob(&chat);
