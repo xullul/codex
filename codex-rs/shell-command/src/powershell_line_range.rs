@@ -47,16 +47,7 @@ pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand
     };
     let (lines_var, read_target) = get_content_assignment(lines_assignment)?;
 
-    let (range_binding, loop_statement) = match rest {
-        [loop_statement] => (None, loop_statement.as_str()),
-        [range_assignment, loop_statement] => (
-            Some(numeric_range_variable_assignment(range_assignment)?),
-            loop_statement.as_str(),
-        ),
-        _ => return None,
-    };
-
-    if !is_line_range_preview_loop(loop_statement, &lines_var, range_binding.as_deref()) {
+    if !all_line_range_preview_statements(rest, &lines_var) {
         return None;
     }
     let path = apply_cwd_to_path(
@@ -69,6 +60,36 @@ pub(crate) fn summarize_line_range_preview(script: &str) -> Option<ParsedCommand
         name: short_display_path(&path),
         path: PathBuf::from(path),
     })
+}
+
+fn all_line_range_preview_statements(statements: &[String], lines_var: &str) -> bool {
+    let mut remaining = statements;
+    let mut saw_preview = false;
+
+    while let Some((statement, rest)) = remaining.split_first() {
+        let mut range_binding = None;
+        let mut loop_statement = statement.as_str();
+        remaining = rest;
+
+        if let Some(binding) = numeric_range_variable_assignment(statement) {
+            let Some((next_statement, next_rest)) = remaining.split_first() else {
+                return false;
+            };
+            range_binding = Some(binding);
+            loop_statement = next_statement;
+            remaining = next_rest;
+        }
+
+        if !is_line_range_preview_loop(loop_statement, lines_var, range_binding.as_deref())
+            && !is_line_range_index_expression(loop_statement, lines_var)
+            && !is_numeric_range_pipeline(loop_statement, lines_var)
+        {
+            return false;
+        }
+        saw_preview = true;
+    }
+
+    saw_preview
 }
 
 enum ReadTarget {
@@ -546,6 +567,72 @@ fn parse_line_range_loop(
                 for_range_variable(&header, lines_var).map(|var| (var, None, body))
             })
         })
+}
+
+fn is_line_range_index_expression(statement: &str, lines_var: &str) -> bool {
+    let Some(parts) = split_pipeline_parts(statement) else {
+        return false;
+    };
+    let [expression, tail @ ..] = parts.as_slice() else {
+        return false;
+    };
+    if !tail
+        .iter()
+        .all(|part| is_select_object_line_limiter(part) || is_line_range_projection(part))
+    {
+        return false;
+    }
+
+    let compact = remove_ascii_whitespace(expression).to_ascii_lowercase();
+    let Some(rest) = compact.strip_prefix(&format!("${lines_var}[")) else {
+        return false;
+    };
+    let Some(range) = rest.strip_suffix(']') else {
+        return false;
+    };
+    is_numeric_range(range)
+}
+
+fn is_line_range_projection(statement: &str) -> bool {
+    let rest = match strip_foreach_object_keyword(statement.trim()) {
+        Some(rest) => rest.trim_start(),
+        None => return false,
+    };
+    if !rest.starts_with('{') {
+        return false;
+    }
+    let Some(body_end) = matching_delimiter(rest, 0, '{', '}') else {
+        return false;
+    };
+    if !rest[body_end + 1..].trim().is_empty() {
+        return false;
+    }
+    matches!(remove_ascii_whitespace(&rest[1..body_end]).as_str(), "$_")
+}
+
+fn is_numeric_range_pipeline(statement: &str, lines_var: &str) -> bool {
+    let Some(parts) = split_pipeline_parts(statement) else {
+        return false;
+    };
+    let [range, foreach] = parts.as_slice() else {
+        return false;
+    };
+    if !is_range_expression(range) {
+        return false;
+    }
+
+    let rest = match strip_foreach_object_keyword(foreach.trim()) {
+        Some(rest) => rest.trim_start(),
+        None => return false,
+    };
+    if !rest.starts_with('{') {
+        return false;
+    }
+    let Some(body_end) = matching_delimiter(rest, 0, '{', '}') else {
+        return false;
+    };
+    rest[body_end + 1..].trim().is_empty()
+        && is_line_range_loop_body(&rest[1..body_end], "_", lines_var)
 }
 
 fn parse_multi_range_loop(statement: &str, lines_var: &str) -> Option<(String, String, String)> {

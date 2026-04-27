@@ -11,6 +11,9 @@ use crate::powershell_exploration::summarize_known_exploration_script;
 use crate::powershell_line_range::summarize_line_range_preview;
 use crate::powershell_parser::PowershellParseOutcome;
 use crate::powershell_parser::parse_with_powershell_ast;
+use crate::powershell_projection::is_result_variable_projection_statement;
+use crate::powershell_projection::top_level_assignment;
+use crate::powershell_syntax::powershell_literal;
 use crate::powershell_syntax::split_command_tokens;
 use crate::powershell_syntax::split_pipeline_parts;
 use crate::powershell_syntax::split_top_level_statements;
@@ -154,14 +157,26 @@ fn summarize_top_level_last_commands(script: &str) -> Option<Vec<ParsedCommand>>
     let mut cwd: Option<String> = None;
     let mut cwd_stack: Vec<Option<String>> = Vec::new();
     let mut prior_list_path: Option<String> = None;
+    let mut variables: HashMap<String, String> = HashMap::new();
+    let mut command_result_variables: HashMap<String, ParsedCommand> = HashMap::new();
     let mut last_location_action = None;
 
     for statement in statements {
         if let Some(tokens) = split_command_tokens(strip_wrapping_parens(statement.trim())) {
+            let tokens = tokens
+                .into_iter()
+                .map(|token| resolved_variable_value(&token, &variables).unwrap_or(token))
+                .collect::<Vec<_>>();
             let Some((head, tail)) = tokens.split_first() else {
                 continue;
             };
             let head_lower = head.to_ascii_lowercase();
+            if let Some((name, parsed)) = command_result_assignment(&tokens) {
+                let parsed = apply_context_to_parsed(parsed, cwd.as_deref(), &mut prior_list_path);
+                command_result_variables.insert(name, parsed.clone());
+                out.push(parsed);
+                continue;
+            }
             if is_set_location(&head_lower) {
                 if let Some(path) = path_operand(tail) {
                     cwd = Some(match cwd.as_deref() {
@@ -191,11 +206,27 @@ fn summarize_top_level_last_commands(script: &str) -> Option<Vec<ParsedCommand>>
                 prior_list_path = None;
                 continue;
             }
-            if simple_variable_assignment(&tokens).is_some() {
+            if let Some((name, value)) = simple_variable_assignment(&tokens) {
+                variables.insert(name, value);
                 prior_list_path = None;
                 continue;
             }
         } else if is_here_string_assignment(&statement) {
+            prior_list_path = None;
+            continue;
+        }
+
+        if let Some((name, parsed)) = command_result_statement_assignment(&statement, &variables) {
+            let parsed = apply_context_to_parsed(parsed, cwd.as_deref(), &mut prior_list_path);
+            command_result_variables.insert(name, parsed.clone());
+            out.push(parsed);
+            continue;
+        }
+        if is_result_variable_projection_statement(
+            &statement,
+            &command_result_variables,
+            is_formatting_helper,
+        ) {
             prior_list_path = None;
             continue;
         }
@@ -215,8 +246,25 @@ fn summarize_top_level_last_commands(script: &str) -> Option<Vec<ParsedCommand>>
     Some(simplify_powershell_commands(out))
 }
 
-fn summarize_pipeline_last_command(statement: &str) -> Option<ParsedCommand> {
-    let mut parsed = None;
+fn command_result_statement_assignment(
+    statement: &str,
+    variables: &HashMap<String, String>,
+) -> Option<(String, ParsedCommand)> {
+    let (lhs, rhs) = top_level_assignment(statement)?;
+    let name = assignment_name(lhs.trim())?;
+    let commands = summarize_pipeline_commands(rhs.trim(), variables)?;
+    let parsed = commands.into_iter().last()?;
+    if matches!(parsed, ParsedCommand::Unknown { .. }) {
+        return None;
+    }
+    Some((name, parsed))
+}
+
+fn summarize_pipeline_commands(
+    statement: &str,
+    variables: &HashMap<String, String>,
+) -> Option<Vec<ParsedCommand>> {
+    let mut out = Vec::new();
     for part in split_pipeline_parts(statement)? {
         let trimmed = strip_wrapping_parens(part.trim());
         let Some(tokens) = split_command_tokens(trimmed) else {
@@ -225,6 +273,10 @@ fn summarize_pipeline_last_command(statement: &str) -> Option<ParsedCommand> {
             }
             return None;
         };
+        let tokens = tokens
+            .into_iter()
+            .map(|token| resolved_variable_value(&token, variables).unwrap_or(token))
+            .collect::<Vec<_>>();
         if tokens.is_empty() {
             continue;
         }
@@ -240,7 +292,7 @@ fn summarize_pipeline_last_command(statement: &str) -> Option<ParsedCommand> {
         }
         if is_mutating_or_ambiguous(&head_lower) {
             if is_mutating_command(&head_lower) {
-                return Some(edit_action(&ps_join(&tokens)));
+                return Some(vec![edit_action(&ps_join(&tokens))]);
             }
             return None;
         }
@@ -251,9 +303,15 @@ fn summarize_pipeline_last_command(statement: &str) -> Option<ParsedCommand> {
             }
             return None;
         }
-        parsed = Some(next);
+        out.push(next);
     }
-    parsed
+    Some(simplify_powershell_commands(out))
+}
+
+fn summarize_pipeline_last_command(statement: &str) -> Option<ParsedCommand> {
+    summarize_pipeline_commands(statement, &HashMap::new())?
+        .into_iter()
+        .last()
 }
 
 fn location_action(tokens: &[String]) -> ParsedCommand {
@@ -674,6 +732,7 @@ fn summarize_file_method(tokens: &[String]) -> Option<ParsedCommand> {
         .map(str::trim)
         .filter(|value| !value.is_empty())?
         .to_string();
+    let path = powershell_literal(&path).unwrap_or(path);
     Some(ParsedCommand::Read {
         cmd: ps_join(tokens),
         name: short_display_path(&path),

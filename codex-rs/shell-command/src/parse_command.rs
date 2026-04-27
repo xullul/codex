@@ -1521,6 +1521,47 @@ mod tests {
     }
 
     #[test]
+    fn powershell_get_content_multiple_line_range_for_loops_is_read() {
+        let script = "$p='Eticket.IntegrationTests/IntegrationTests/RepairRequestAuditLogTests.cs'; $l=Get-Content $p; for($i=70;$i -le 82;$i++) { '{0,4}: {1}' -f ($i+1), $l[$i] }; for($i=135;$i -le 148;$i++) { '{0,4}: {1}' -f ($i+1), $l[$i] }; for($i=190;$i -le 202;$i++) { '{0,4}: {1}' -f ($i+1), $l[$i] }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content Eticket.IntegrationTests/IntegrationTests/RepairRequestAuditLogTests.cs".to_string(),
+                name: "RepairRequestAuditLogTests.cs".to_string(),
+                path: PathBuf::from(
+                    "Eticket.IntegrationTests/IntegrationTests/RepairRequestAuditLogTests.cs",
+                ),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_content_index_range_expression_is_read() {
+        let script = "$p='src\\engine\\duel.ts'; $lines=Get-Content -LiteralPath $p; $lines[1..10]";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"src\\\\engine\\\\duel.ts\"".to_string(),
+                name: "duel.ts".to_string(),
+                path: PathBuf::from("src\\engine\\duel.ts"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_get_content_numeric_range_pipeline_is_read() {
+        let script = "$p='src\\engine\\duel.ts'; $lines=Get-Content -LiteralPath $p; 1..10 | ForEach-Object { '{0}:{1}' -f $_, $lines[$_-1] }; 20..30 | % { '{0}:{1}' -f $_, $lines[$_-1] }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"src\\\\engine\\\\duel.ts\"".to_string(),
+                name: "duel.ts".to_string(),
+                path: PathBuf::from("src\\engine\\duel.ts"),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_get_content_line_range_for_loop_with_variable_path_is_read() {
         let script = "$lines=Get-Content $PROFILE; for ($i = 0; $i -lt $lines.Count; $i++) { '{0}:{1}' -f ($i+1), $lines[$i] }";
         assert_parsed(
@@ -1690,6 +1731,51 @@ mod tests {
                 cmd: "Select-String -Path src/lib.rs -Pattern TODO".to_string(),
                 query: Some("TODO".to_string()),
                 path: Some("lib.rs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_command_result_projection_loops_keep_semantic_action() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $matches = rg 'repairRequest' Eticket.IntegrationTests; foreach($m in $matches) { $m }; Pop-Location",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "rg repairRequest Eticket.IntegrationTests".to_string(),
+                query: Some("repairRequest".to_string()),
+                path: Some("Eticket.IntegrationTests".to_string()),
+            }],
+        );
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $matches=Select-String -Path src/lib.rs -Pattern TODO; for($i=0; $i -lt $matches.Count; $i++) { $matches[$i].Line }",
+            ]),
+            vec![ParsedCommand::Search {
+                cmd: "Select-String -Path src/lib.rs -Pattern TODO".to_string(),
+                query: Some("TODO".to_string()),
+                path: Some("lib.rs".to_string()),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_non_get_content_projection_loop_is_read() {
+        let script = "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $lines = [IO.File]::ReadAllLines('src/lib.rs'); foreach($line in $lines) { $line }; Pop-Location";
+        let expected_path =
+            PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra").join("src/lib.rs");
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "'[IO.File]::ReadAllLines(src/lib.rs)'".to_string(),
+                name: "lib.rs".to_string(),
+                path: expected_path,
             }],
         );
     }
