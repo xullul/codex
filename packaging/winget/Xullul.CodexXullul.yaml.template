@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.10.0.schema.json
+PackageIdentifier: Xullul.CodexXullul
+PackageVersion: VERSION
+PackageLocale: en-US
+PackageName: codex-xullul
+Publisher: Xullul
+Author: Xullul
+Moniker: codex-xullul
+License: Apache-2.0
+LicenseUrl: https://github.com/xullul/codex/blob/main/LICENSE
+ShortDescription: Personal Xullul fork of Codex CLI.
+Description: Personal Xullul fork of the Codex CLI, installed as codex-xullul so it can coexist with upstream codex.
+PackageUrl: https://github.com/xullul/codex
+Tags:
+  - ai
+  - cli
+  - codex
+  - coding-agent
+Commands:
+  - codex-xullul
+InstallerType: portable
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/xullul/codex/releases/download/xullul-vVERSION/codex-xullul-windows-x64.exe
+    InstallerSha256: SHA256
+ManifestType: singleton
+ManifestVersion: 1.10.0

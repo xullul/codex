@@ -1,0 +1,117 @@
+name: xullul-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 2026.04.28.1. Leave blank to use yyyy.MM.dd.run."
+        required: false
+        type: string
+      prerelease:
+        description: "Mark the GitHub release as a prerelease."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xullul-release
+  cancel-in-progress: false
+
+jobs:
+  windows-x64:
+    name: Build Windows x64 release
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+
+      - name: Resolve release version
+        id: release
+        shell: pwsh
+        working-directory: .
+        run: |
+          $version = '${{ inputs.version }}'.Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) {
+              $version = "$(Get-Date -Format 'yyyy.MM.dd').${{ github.run_number }}"
+          }
+
+          if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+              throw "Release version must contain only ASCII letters, digits, dot, plus, or dash after the first character."
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=xullul-v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build codex-xullul
+        shell: pwsh
+        run: cargo build -p codex-cli --bin codex --release
+
+      - name: Stage release assets
+        shell: pwsh
+        working-directory: .
+        run: |
+          $dist = Join-Path $PWD "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          $exe = Join-Path $dist "codex-xullul-windows-x64.exe"
+          Copy-Item -LiteralPath "codex-rs\target\release\codex.exe" -Destination $exe
+          Copy-Item -LiteralPath "scripts\install\install-codex-xullul-direct.ps1" -Destination (Join-Path $dist "install-codex-xullul.ps1")
+
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$exe.sha256" -Value "$hash  codex-xullul-windows-x64.exe" -Encoding ASCII
+
+          $notes = @"
+          Personal codex-xullul Windows x64 release.
+
+          Install with:
+
+          ```powershell
+          irm https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag }}/install-codex-xullul.ps1 | iex
+          ```
+          "@
+          Set-Content -LiteralPath (Join-Path $dist "release-notes.md") -Value $notes -Encoding UTF8
+
+      - name: Publish GitHub release
+        shell: pwsh
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          $assets = @(
+              "dist\codex-xullul-windows-x64.exe",
+              "dist\codex-xullul-windows-x64.exe.sha256",
+              "dist\install-codex-xullul.ps1"
+          )
+
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+              gh release upload $env:TAG @assets --repo $env:GITHUB_REPOSITORY --clobber
+              exit $LASTEXITCODE
+          }
+
+          $ghArgs = @(
+              "release", "create", $env:TAG
+          ) + $assets + @(
+              "--repo", $env:GITHUB_REPOSITORY,
+              "--target", $env:GITHUB_SHA,
+              "--title", "codex-xullul $env:VERSION",
+              "--notes-file", "dist\release-notes.md"
+          )
+
+          if ($env:PRERELEASE -eq "true") {
+              $ghArgs += "--prerelease"
+          }
+
+          gh @ghArgs

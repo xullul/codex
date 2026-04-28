@@ -30,6 +30,9 @@ The scripts default to `xullul/codex`, `latest`, and `codex-xullul`. Override
 those with `--repo`, `--release`, and `--command`, or with
 `CODEX_XULLUL_REPO`, `CODEX_XULLUL_RELEASE`, and `CODEX_XULLUL_COMMAND`.
 
+For this personal fork's direct Windows release installer and Winget manifest
+template, see [Xullul Release](./xullul-release.md).
+
 ### Build from source
 
 ```bash
