@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
-assertion_line: 40
 expression: "format!(\"{buf:?}\")"
 ---
 Buffer {
@@ -8,7 +7,7 @@ Buffer {
     content: [
         "                                                                                ",
         "                                                                                ",
-        "  Would you like to run the following command?                                  ",
+        "  Run this command?                                                             ",
         "                                                                                ",
         "  Reason: this is a test reason such as one that would be produced by the       ",
         "  model                                                                         ",
@@ -23,7 +22,7 @@ Buffer {
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 46, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 19, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 10, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: ITALIC,
         x: 73, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: ITALIC,

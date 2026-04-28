@@ -70,6 +70,7 @@ use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
 use codex_models_manager::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
+use codex_protocol::config_types::ExecOutputMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
@@ -301,6 +302,9 @@ pub struct Config {
     /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
     /// Defaults to `false`.
     pub show_raw_agent_reasoning: bool,
+
+    /// Controls human-readable stderr output in non-interactive `codex exec`.
+    pub exec_output_mode: ExecOutputMode,
 
     /// User-provided instructions from AGENTS.md.
     pub user_instructions: Option<String>,
@@ -2430,6 +2434,11 @@ impl Config {
                 .show_raw_agent_reasoning
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(false),
+            exec_output_mode: cfg
+                .exec
+                .as_ref()
+                .and_then(|exec| exec.output_mode)
+                .unwrap_or_default(),
             guardian_policy_config,
             model_reasoning_effort: config_profile
                 .model_reasoning_effort

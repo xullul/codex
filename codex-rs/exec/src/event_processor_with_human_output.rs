@@ -10,6 +10,7 @@ use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::TurnStatus;
 use codex_core::config::Config;
 use codex_model_provider_info::WireApi;
+use codex_protocol::config_types::ExecOutputMode;
 use codex_protocol::num_format::format_with_separators;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
@@ -31,6 +32,7 @@ pub(crate) struct EventProcessorWithHumanOutput {
     yellow: Style,
     show_agent_reasoning: bool,
     show_raw_agent_reasoning: bool,
+    output_mode: ExecOutputMode,
     last_message_path: Option<PathBuf>,
     final_message: Option<String>,
     final_message_rendered: bool,
@@ -56,6 +58,7 @@ impl EventProcessorWithHumanOutput {
             yellow: style(Style::new().yellow(), Style::new()),
             show_agent_reasoning: !config.hide_agent_reasoning,
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
+            output_mode: config.exec_output_mode,
             last_message_path,
             final_message: None,
             final_message_rendered: false,
@@ -67,12 +70,20 @@ impl EventProcessorWithHumanOutput {
     fn render_item_started(&self, item: &ThreadItem) {
         match item {
             ThreadItem::CommandExecution { command, cwd, .. } => {
-                eprintln!(
-                    "{}\n{} in {}",
-                    "exec".style(self.italic).style(self.magenta),
-                    command.style(self.bold),
-                    cwd.display()
-                );
+                if self.output_mode == ExecOutputMode::Concise {
+                    eprintln!(
+                        "{} {}",
+                        "exec".style(self.italic).style(self.magenta),
+                        command.style(self.bold)
+                    );
+                } else {
+                    eprintln!(
+                        "{}\n{} in {}",
+                        "exec".style(self.italic).style(self.magenta),
+                        command.style(self.bold),
+                        cwd.display()
+                    );
+                }
             }
             ThreadItem::McpToolCall { server, tool, .. } => {
                 eprintln!(
@@ -109,7 +120,8 @@ impl EventProcessorWithHumanOutput {
             ThreadItem::Reasoning {
                 summary, content, ..
             } => {
-                if self.show_agent_reasoning
+                if self.output_mode == ExecOutputMode::Full
+                    && self.show_agent_reasoning
                     && let Some(text) =
                         reasoning_text(&summary, &content, self.show_raw_agent_reasoning)
                     && !text.trim().is_empty()
@@ -130,10 +142,12 @@ impl EventProcessorWithHumanOutput {
                     .unwrap_or_default();
                 match status {
                     CommandExecutionStatus::Completed => {
-                        eprintln!(
-                            "{}",
-                            format!(" succeeded{duration_suffix}:").style(self.green)
-                        );
+                        if self.output_mode == ExecOutputMode::Full {
+                            eprintln!(
+                                "{}",
+                                format!(" succeeded{duration_suffix}:").style(self.green)
+                            );
+                        }
                     }
                     CommandExecutionStatus::Failed => {
                         let exit_code = exit_code.unwrap_or(1);
@@ -157,6 +171,7 @@ impl EventProcessorWithHumanOutput {
                 }
                 if let Some(output) = aggregated_output
                     && !output.trim().is_empty()
+                    && should_render_command_output(self.output_mode, status)
                 {
                     eprintln!("{output}");
                 }
@@ -216,6 +231,14 @@ impl EventProcessor for EventProcessorWithHumanOutput {
         session_configured_event: &SessionConfiguredEvent,
     ) {
         const VERSION: &str = env!("CARGO_PKG_VERSION");
+        if self.output_mode == ExecOutputMode::Concise {
+            eprintln!(
+                "OpenAI Codex v{VERSION} | {} | {}",
+                session_configured_event.model,
+                config.cwd.display()
+            );
+            return;
+        }
         eprintln!("OpenAI Codex v{VERSION} (research preview)\n--------");
         for (key, value) in config_summary_entries(config, session_configured_event) {
             eprintln!("{} {}", format!("{key}:").style(self.bold), value);
@@ -332,7 +355,8 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 TurnStatus::InProgress => CodexStatus::Running,
             },
             ServerNotification::TurnDiffUpdated(notification) => {
-                if !notification.diff.trim().is_empty() {
+                if self.output_mode == ExecOutputMode::Full && !notification.diff.trim().is_empty()
+                {
                     eprintln!("{}", notification.diff);
                 }
                 CodexStatus::Running
@@ -561,6 +585,13 @@ fn should_print_final_message_to_tty(
     stderr_is_terminal: bool,
 ) -> bool {
     final_message.is_some() && !final_message_rendered && stdout_is_terminal && stderr_is_terminal
+}
+
+fn should_render_command_output(
+    output_mode: ExecOutputMode,
+    status: CommandExecutionStatus,
+) -> bool {
+    output_mode == ExecOutputMode::Full || status != CommandExecutionStatus::Completed
 }
 
 #[cfg(test)]

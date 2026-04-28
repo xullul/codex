@@ -8260,7 +8260,7 @@ impl ChatWidget {
     pub(crate) fn open_personality_popup(&mut self) {
         if !self.is_session_configured() {
             self.add_info_message(
-                "Personality selection is disabled until startup completes.".to_string(),
+                "Personality selection is available after startup finishes.".to_string(),
                 /*hint*/ None,
             );
             return;
@@ -8268,7 +8268,7 @@ impl ChatWidget {
         if !self.current_model_supports_personality() {
             let current_model = self.current_model();
             self.add_error_message(format!(
-                "Current model ({current_model}) doesn't support personalities. Try /model to pick a different model."
+                "Current model ({current_model}) does not support personalities. Use /model to choose a supported model."
             ));
             return;
         }
@@ -8318,8 +8318,8 @@ impl ChatWidget {
             .collect();
 
         let mut header = ColumnRenderable::new();
-        header.push(Line::from("Select Personality".bold()));
-        header.push(Line::from("Choose a communication style for Codex.".dim()));
+        header.push(Line::from("Select personality".bold()));
+        header.push(Line::from("Choose how Codex should communicate.".dim()));
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             header: Box::new(header),
@@ -10349,8 +10349,8 @@ impl ChatWidget {
     fn personality_description(personality: Personality) -> &'static str {
         match personality {
             Personality::None => "No personality instructions.",
-            Personality::Friendly => "Warm, collaborative, and helpful.",
-            Personality::Pragmatic => "Concise, task-focused, and direct.",
+            Personality::Friendly => "Warm, collaborative, and explanatory.",
+            Personality::Pragmatic => "Concise, direct, and task-focused.",
         }
     }
 

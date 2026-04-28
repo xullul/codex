@@ -2,6 +2,7 @@ use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnStatus;
+use codex_protocol::config_types::ExecOutputMode;
 use owo_colors::Style;
 use pretty_assertions::assert_eq;
 
@@ -10,6 +11,7 @@ use super::final_message_from_turn_items;
 use super::reasoning_text;
 use super::should_print_final_message_to_stdout;
 use super::should_print_final_message_to_tty;
+use super::should_render_command_output;
 use crate::event_processor::EventProcessor;
 
 #[test]
@@ -90,6 +92,30 @@ fn reasoning_text_uses_raw_content_when_enabled() {
 }
 
 #[test]
+fn concise_mode_hides_successful_command_output() {
+    assert!(!should_render_command_output(
+        ExecOutputMode::Concise,
+        codex_app_server_protocol::CommandExecutionStatus::Completed
+    ));
+}
+
+#[test]
+fn concise_mode_keeps_failed_command_output() {
+    assert!(should_render_command_output(
+        ExecOutputMode::Concise,
+        codex_app_server_protocol::CommandExecutionStatus::Failed
+    ));
+}
+
+#[test]
+fn full_mode_keeps_successful_command_output() {
+    assert!(should_render_command_output(
+        ExecOutputMode::Full,
+        codex_app_server_protocol::CommandExecutionStatus::Completed
+    ));
+}
+
+#[test]
 fn final_message_from_turn_items_uses_latest_agent_message() {
     let message = final_message_from_turn_items(&[
         ThreadItem::AgentMessage {
@@ -147,6 +173,7 @@ fn turn_completed_recovers_final_message_from_turn_items() {
         yellow: Style::new(),
         show_agent_reasoning: true,
         show_raw_agent_reasoning: false,
+        output_mode: ExecOutputMode::Full,
         last_message_path: None,
         final_message: None,
         final_message_rendered: false,
@@ -194,6 +221,7 @@ fn turn_completed_overwrites_stale_final_message_from_turn_items() {
         yellow: Style::new(),
         show_agent_reasoning: true,
         show_raw_agent_reasoning: false,
+        output_mode: ExecOutputMode::Full,
         last_message_path: None,
         final_message: Some("stale answer".to_string()),
         final_message_rendered: true,
@@ -242,6 +270,7 @@ fn turn_completed_preserves_streamed_final_message_when_turn_items_are_empty() {
         yellow: Style::new(),
         show_agent_reasoning: true,
         show_raw_agent_reasoning: false,
+        output_mode: ExecOutputMode::Full,
         last_message_path: None,
         final_message: Some("streamed answer".to_string()),
         final_message_rendered: false,
@@ -285,6 +314,7 @@ fn turn_failed_clears_stale_final_message() {
         yellow: Style::new(),
         show_agent_reasoning: true,
         show_raw_agent_reasoning: false,
+        output_mode: ExecOutputMode::Full,
         last_message_path: None,
         final_message: Some("partial answer".to_string()),
         final_message_rendered: true,
@@ -329,6 +359,7 @@ fn turn_interrupted_clears_stale_final_message() {
         yellow: Style::new(),
         show_agent_reasoning: true,
         show_raw_agent_reasoning: false,
+        output_mode: ExecOutputMode::Full,
         last_message_path: None,
         final_message: Some("partial answer".to_string()),
         final_message_rendered: true,

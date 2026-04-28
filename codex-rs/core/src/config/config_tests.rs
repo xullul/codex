@@ -13,6 +13,7 @@ use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::ExecToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -56,6 +57,7 @@ use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::config_types::ExecOutputMode;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
@@ -538,6 +540,37 @@ async fn runtime_config_defaults_model_availability_nux() {
         cfg.model_availability_nux,
         ModelAvailabilityNuxConfig::default()
     );
+}
+
+#[tokio::test]
+async fn runtime_config_defaults_exec_output_mode_to_full() {
+    let cfg = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load config");
+
+    assert_eq!(cfg.exec_output_mode, ExecOutputMode::Full);
+}
+
+#[tokio::test]
+async fn runtime_config_loads_exec_output_mode() {
+    let cfg = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            exec: Some(ExecToml {
+                output_mode: Some(ExecOutputMode::Concise),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load config");
+
+    assert_eq!(cfg.exec_output_mode, ExecOutputMode::Concise);
 }
 
 #[test]
@@ -5264,6 +5297,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             zsh_path: None,
             hide_agent_reasoning: false,
             show_raw_agent_reasoning: false,
+            exec_output_mode: ExecOutputMode::Full,
             model_reasoning_effort: Some(ReasoningEffort::High),
             plan_mode_reasoning_effort: None,
             model_reasoning_summary: Some(ReasoningSummary::Detailed),
@@ -5460,6 +5494,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         zsh_path: None,
         hide_agent_reasoning: false,
         show_raw_agent_reasoning: false,
+        exec_output_mode: ExecOutputMode::Full,
         model_reasoning_effort: None,
         plan_mode_reasoning_effort: None,
         model_reasoning_summary: None,
@@ -5610,6 +5645,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         zsh_path: None,
         hide_agent_reasoning: false,
         show_raw_agent_reasoning: false,
+        exec_output_mode: ExecOutputMode::Full,
         model_reasoning_effort: None,
         plan_mode_reasoning_effort: None,
         model_reasoning_summary: None,
@@ -5745,6 +5781,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         zsh_path: None,
         hide_agent_reasoning: false,
         show_raw_agent_reasoning: false,
+        exec_output_mode: ExecOutputMode::Full,
         model_reasoning_effort: Some(ReasoningEffort::High),
         plan_mode_reasoning_effort: None,
         model_reasoning_summary: Some(ReasoningSummary::Detailed),

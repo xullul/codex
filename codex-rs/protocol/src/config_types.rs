@@ -163,6 +163,17 @@ pub enum Personality {
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
+pub enum ExecOutputMode {
+    #[default]
+    Full,
+    Concise,
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Display, JsonSchema, TS, Default,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum WebSearchMode {
     Disabled,
     #[default]

@@ -60,6 +60,21 @@ When Codex knows which client started the turn, the legacy notify JSON payload a
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.
 
+## Exec output
+
+`codex exec` keeps detailed human-readable stderr output by default. To reduce
+noise in non-interactive runs while leaving JSON output and final stdout behavior
+unchanged, set:
+
+```toml
+[exec]
+output_mode = "concise" # "full" or "concise"
+```
+
+Concise mode keeps warnings, errors, failed command output, and file-change
+summaries, but hides reasoning summaries, successful command output, and raw
+turn diffs.
+
 ## SQLite State DB
 
 Codex stores the SQLite-backed state DB under `sqlite_home` (config key) or the

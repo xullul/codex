@@ -209,10 +209,10 @@ impl ApprovalOverlay {
                     additional_permissions.as_ref(),
                 ),
                 network_approval_context.as_ref().map_or_else(
-                    || "Would you like to run the following command?".to_string(),
+                    || "Run this command?".to_string(),
                     |network_approval_context| {
                         format!(
-                            "Do you want to approve network access to \"{}\"?",
+                            "Allow network access to \"{}\"?",
                             network_approval_context.host
                         )
                     },
@@ -220,12 +220,11 @@ impl ApprovalOverlay {
             ),
             ApprovalRequest::Permissions { .. } => (
                 permissions_options(),
-                "Would you like to grant these permissions?".to_string(),
+                "Grant these permissions?".to_string(),
             ),
-            ApprovalRequest::ApplyPatch { .. } => (
-                patch_options(),
-                "Would you like to make the following edits?".to_string(),
-            ),
+            ApprovalRequest::ApplyPatch { .. } => {
+                (patch_options(), "Apply these edits?".to_string())
+            }
             ApprovalRequest::McpElicitation { server_name, .. } => (
                 elicitation_options(),
                 format!("{server_name} needs your approval."),
@@ -1601,9 +1600,9 @@ mod tests {
             .collect();
 
         assert!(
-            rendered.iter().any(|line| {
-                line.contains("Do you want to approve network access to \"example.com\"?")
-            }),
+            rendered
+                .iter()
+                .any(|line| { line.contains("Allow network access to \"example.com\"?") }),
             "expected network title to include host, got {rendered:?}"
         );
         assert!(

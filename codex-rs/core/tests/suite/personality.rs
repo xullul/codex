@@ -35,8 +35,7 @@ use tokio::time::sleep;
 use wiremock::BodyPrintLimit;
 use wiremock::MockServer;
 
-const LOCAL_FRIENDLY_TEMPLATE: &str =
-    "You optimize for team morale and being a supportive teammate as much as code quality.";
+const LOCAL_FRIENDLY_TEMPLATE: &str = "You are a warm, rigorous collaborator.";
 const LOCAL_PRAGMATIC_TEMPLATE: &str = "You are a deeply pragmatic, effective software engineer.";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

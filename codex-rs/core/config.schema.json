@@ -663,6 +663,27 @@
       },
       "type": "object"
     },
+    "ExecOutputMode": {
+      "enum": [
+        "full",
+        "concise"
+      ],
+      "type": "string"
+    },
+    "ExecToml": {
+      "additionalProperties": false,
+      "properties": {
+        "output_mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ExecOutputMode"
+            }
+          ],
+          "description": "Controls human-readable stderr output in non-interactive mode. `full` preserves the current detailed output. `concise` hides successful command output, reasoning summaries, and raw diffs while retaining warnings, errors, failures, file changes, and final output behavior."
+        }
+      },
+      "type": "object"
+    },
     "ExplorationSubagentsConfigToml": {
       "enum": [
         "prefer",
@@ -2499,6 +2520,15 @@
     "disable_paste_burst": {
       "description": "When true, disables burst-paste detection for typed input entirely. All characters are inserted as they are received, and no buffering or placeholder replacement will occur for fast keypress bursts.",
       "type": "boolean"
+    },
+    "exec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ExecToml"
+        }
+      ],
+      "default": null,
+      "description": "Settings that apply to `codex exec`."
     },
     "experimental_compact_prompt_file": {
       "$ref": "#/definitions/AbsolutePathBuf"
