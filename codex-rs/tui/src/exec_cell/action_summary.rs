@@ -1,5 +1,6 @@
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::parse_command::ParsedCommandActionKind;
+use codex_shell_command::parse_command::classify_action_script;
 
 use super::model::ExecCall;
 
@@ -22,6 +23,7 @@ pub(crate) enum ActionKind {
 pub(crate) struct ActionSummary {
     pub(crate) kind: ActionKind,
     pub(crate) detail: Option<String>,
+    pub(crate) subactions: Vec<ActionSummary>,
     pub(crate) suppress_success_output: bool,
 }
 
@@ -59,26 +61,46 @@ pub(crate) fn summarize_call(call: &ExecCall, command_display: &str) -> Option<A
         return Some(ActionSummary {
             kind: ActionKind::Wait,
             detail: Some(command_display.to_string()),
+            subactions: Vec::new(),
             suppress_success_output: true,
         });
     }
     if let Some(summary) = summarize_parsed(&call.parsed) {
         return Some(summary);
     }
-    summarize_raw(command_display)
+    classify_action_script(command_display).and_then(|command| summarize_single_parsed(&command))
 }
 
 fn summarize_parsed(parsed: &[ParsedCommand]) -> Option<ActionSummary> {
+    if parsed.len() > 1 && parsed.iter().all(is_non_exploration_action) {
+        let subactions = parsed
+            .iter()
+            .map(summarize_single_parsed)
+            .collect::<Option<Vec<_>>>()?;
+        return Some(ActionSummary {
+            kind: ActionKind::Run,
+            detail: Some(format!("{} commands", subactions.len())),
+            subactions,
+            suppress_success_output: false,
+        });
+    }
+
     let single = primary_parsed_summary(parsed)?;
+    summarize_single_parsed(single)
+}
+
+fn summarize_single_parsed(single: &ParsedCommand) -> Option<ActionSummary> {
     match single {
         ParsedCommand::Read { name, .. } => Some(ActionSummary {
             kind: ActionKind::Read,
             detail: Some(name.clone()),
+            subactions: Vec::new(),
             suppress_success_output: true,
         }),
         ParsedCommand::ListFiles { cmd, path } => Some(ActionSummary {
             kind: ActionKind::List,
             detail: Some(path.clone().unwrap_or_else(|| cmd.clone())),
+            subactions: Vec::new(),
             suppress_success_output: true,
         }),
         ParsedCommand::Search { cmd, query, path } => {
@@ -90,12 +112,14 @@ fn summarize_parsed(parsed: &[ParsedCommand]) -> Option<ActionSummary> {
             Some(ActionSummary {
                 kind: ActionKind::Search,
                 detail: Some(detail),
+                subactions: Vec::new(),
                 suppress_success_output: true,
             })
         }
         ParsedCommand::Action { kind, detail, cmd } => Some(ActionSummary {
             kind: action_kind_from_parsed(kind),
             detail: detail.clone().or_else(|| Some(cmd.clone())),
+            subactions: Vec::new(),
             suppress_success_output: *kind == ParsedCommandActionKind::Inspect,
         }),
         ParsedCommand::Unknown { .. } => None,
@@ -139,87 +163,4 @@ fn action_kind_from_parsed(kind: &ParsedCommandActionKind) -> ActionKind {
         ParsedCommandActionKind::Wait => ActionKind::Wait,
         ParsedCommandActionKind::Run => ActionKind::Run,
     }
-}
-
-fn summarize_raw(command: &str) -> Option<ActionSummary> {
-    let first_line = command.lines().next().unwrap_or(command).trim();
-    if first_line.is_empty() {
-        return None;
-    }
-    let lower = first_line.to_ascii_lowercase();
-    let kind = if lower.starts_with("apply_patch")
-        || lower.contains("apply_patch <<")
-        || lower.starts_with("python") && lower.contains("write_text")
-    {
-        ActionKind::Edit
-    } else if is_test_command(&lower) {
-        ActionKind::Test
-    } else if is_build_command(&lower) {
-        ActionKind::Build
-    } else if is_lint_command(&lower) {
-        ActionKind::Lint
-    } else if lower.starts_with("git ") {
-        ActionKind::Git
-    } else if lower.starts_with("sleep ") || lower == "sleep" || lower.starts_with("timeout ") {
-        ActionKind::Wait
-    } else if is_run_command(&lower) {
-        ActionKind::Run
-    } else {
-        return None;
-    };
-
-    Some(ActionSummary {
-        kind,
-        detail: Some(first_line.to_string()),
-        suppress_success_output: false,
-    })
-}
-
-fn is_test_command(command: &str) -> bool {
-    command.starts_with("cargo test")
-        || command.starts_with("cargo nextest")
-        || command.starts_with("just test")
-        || command.starts_with("npm test")
-        || command.starts_with("npm run test")
-        || command.starts_with("pnpm test")
-        || command.starts_with("pnpm run test")
-        || command.starts_with("yarn test")
-        || command.starts_with("pytest")
-        || command.starts_with("go test")
-        || command.starts_with("bazel test")
-}
-
-fn is_build_command(command: &str) -> bool {
-    command.starts_with("cargo build")
-        || command.starts_with("cargo check")
-        || command.starts_with("just build")
-        || command.starts_with("npm run build")
-        || command.starts_with("pnpm build")
-        || command.starts_with("pnpm run build")
-        || command.starts_with("yarn build")
-        || command.starts_with("go build")
-        || command.starts_with("bazel build")
-}
-
-fn is_lint_command(command: &str) -> bool {
-    command.starts_with("cargo clippy")
-        || command.starts_with("just fix")
-        || command.starts_with("just fmt")
-        || command.starts_with("cargo fmt")
-        || command.starts_with("npm run lint")
-        || command.starts_with("pnpm lint")
-        || command.starts_with("pnpm run lint")
-        || command.starts_with("yarn lint")
-}
-
-fn is_run_command(command: &str) -> bool {
-    command.starts_with("cargo run")
-        || command.starts_with("npm start")
-        || command.starts_with("npm run start")
-        || command.starts_with("pnpm start")
-        || command.starts_with("pnpm run start")
-        || command.starts_with("yarn start")
-        || command.starts_with("node ")
-        || command.starts_with("python ")
-        || command.starts_with("python3 ")
 }

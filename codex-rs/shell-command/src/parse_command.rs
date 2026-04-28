@@ -20,6 +20,15 @@ pub fn extract_shell_command(command: &[String]) -> Option<(&str, &str)> {
     extract_bash_command(command).or_else(|| extract_powershell_command(command))
 }
 
+/// Classifies a simple shell script as one high-level command action.
+///
+/// This is intentionally conservative: dynamic, multi-statement, pipeline, or
+/// unsupported syntax returns `None` so callers can keep the original raw
+/// command text.
+pub fn classify_action_script(script: &str) -> Option<ParsedCommand> {
+    action_from_script(script)
+}
+
 /// DO NOT REVIEW THIS CODE BY HAND
 /// This parsing code is quite complex and not easy to hand-modify.
 /// The easiest way to iterate is to add unit tests and have Codex fix the implementation.
@@ -1917,12 +1926,211 @@ mod tests {
     }
 
     #[test]
+    fn powershell_multi_action_scripts_are_semantic() {
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; git status --short; pnpm test; dotnet test",
+            ]),
+            vec![
+                ParsedCommand::Action {
+                    cmd: "git status --short".to_string(),
+                    kind: ParsedCommandActionKind::Git,
+                    detail: Some("git status --short".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("pnpm test".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "dotnet test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("dotnet test".to_string()),
+                },
+            ],
+        );
+
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Set-Location -LiteralPath 'C:\\Users\\Keenu\\KeenuProjects\\mantra'\ngit status --short\npnpm test\ndotnet test",
+            ]),
+            vec![
+                ParsedCommand::Action {
+                    cmd: "git status --short".to_string(),
+                    kind: ParsedCommandActionKind::Git,
+                    detail: Some("git status --short".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("pnpm test".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "dotnet test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("dotnet test".to_string()),
+                },
+            ],
+        );
+
+        assert_parsed(
+            &vec_str(&[
+                "pwsh",
+                "-NoProfile",
+                "-Command",
+                "Push-Location src; dotnet build; pnpm run lint; Pop-Location",
+            ]),
+            vec![
+                ParsedCommand::Action {
+                    cmd: "dotnet build".to_string(),
+                    kind: ParsedCommandActionKind::Build,
+                    detail: Some("dotnet build".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm run lint".to_string(),
+                    kind: ParsedCommandActionKind::Lint,
+                    detail: Some("pnpm run lint".to_string()),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn dotnet_lifecycle_commands_are_actions() {
+        for (script, kind) in [
+            ("dotnet test", ParsedCommandActionKind::Test),
+            ("dotnet build", ParsedCommandActionKind::Build),
+            ("dotnet publish", ParsedCommandActionKind::Build),
+            ("dotnet restore", ParsedCommandActionKind::Build),
+            ("dotnet format", ParsedCommandActionKind::Lint),
+            ("dotnet run", ParsedCommandActionKind::Run),
+            ("dotnet --info", ParsedCommandActionKind::Inspect),
+        ] {
+            assert_parsed(
+                &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+                vec![ParsedCommand::Action {
+                    cmd: script.to_string(),
+                    kind,
+                    detail: Some(script.to_string()),
+                }],
+            );
+        }
+    }
+
+    #[test]
+    fn broad_action_classifier_covers_common_ecosystems_and_wrappers() {
+        for (script, kind) in [
+            ("npm ci", ParsedCommandActionKind::Build),
+            ("npx vite build", ParsedCommandActionKind::Build),
+            ("pnpm exec vitest run", ParsedCommandActionKind::Test),
+            ("yarn dlx eslint .", ParsedCommandActionKind::Lint),
+            ("bunx tsc --noEmit", ParsedCommandActionKind::Lint),
+            ("python -m pytest", ParsedCommandActionKind::Test),
+            ("uv run pytest", ParsedCommandActionKind::Test),
+            ("poetry run ruff check .", ParsedCommandActionKind::Lint),
+            ("bundle exec rspec", ParsedCommandActionKind::Test),
+            ("make test", ParsedCommandActionKind::Test),
+            ("just lint", ParsedCommandActionKind::Lint),
+            ("task build", ParsedCommandActionKind::Build),
+            (
+                "nx affected -t 'test,build,lint'",
+                ParsedCommandActionKind::Run,
+            ),
+            ("turbo run build test lint", ParsedCommandActionKind::Run),
+            ("go test ./...", ParsedCommandActionKind::Test),
+            ("mvn verify", ParsedCommandActionKind::Test),
+            ("./gradlew build", ParsedCommandActionKind::Build),
+            ("docker compose up --build", ParsedCommandActionKind::Run),
+            ("terraform validate", ParsedCommandActionKind::Lint),
+            ("terraform test", ParsedCommandActionKind::Test),
+        ] {
+            assert_parsed(
+                &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+                vec![ParsedCommand::Action {
+                    cmd: script.to_string(),
+                    kind,
+                    detail: Some(script.to_string()),
+                }],
+            );
+        }
+    }
+
+    #[test]
+    fn framework_clis_are_actions() {
+        for (script, kind) in [
+            ("next dev", ParsedCommandActionKind::Run),
+            ("next build", ParsedCommandActionKind::Build),
+            ("next start", ParsedCommandActionKind::Run),
+            ("next info", ParsedCommandActionKind::Inspect),
+            ("vite build", ParsedCommandActionKind::Build),
+            ("vite preview", ParsedCommandActionKind::Run),
+            ("ng test", ParsedCommandActionKind::Test),
+            ("ng build", ParsedCommandActionKind::Build),
+            ("ng serve", ParsedCommandActionKind::Run),
+            ("ng lint", ParsedCommandActionKind::Lint),
+            ("php artisan test", ParsedCommandActionKind::Test),
+            ("php artisan serve", ParsedCommandActionKind::Run),
+            ("php artisan migrate", ParsedCommandActionKind::Run),
+            ("rails test", ParsedCommandActionKind::Test),
+            ("rails server", ParsedCommandActionKind::Run),
+            ("rails db:migrate", ParsedCommandActionKind::Run),
+            ("django-admin test", ParsedCommandActionKind::Test),
+            ("django-admin check", ParsedCommandActionKind::Lint),
+            ("django-admin runserver", ParsedCommandActionKind::Run),
+            ("kubectl get pods", ParsedCommandActionKind::Inspect),
+            ("kubectl apply -f app.yaml", ParsedCommandActionKind::Run),
+        ] {
+            assert_parsed(
+                &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+                vec![ParsedCommand::Action {
+                    cmd: script.to_string(),
+                    kind,
+                    detail: Some(script.to_string()),
+                }],
+            );
+        }
+    }
+
+    #[test]
     fn powershell_dynamic_invocation_stays_unknown() {
         let script = "$cmd='Get-ChildItem'; & $cmd";
         assert_parsed(
             &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
             vec![ParsedCommand::Unknown {
                 cmd: script.to_string(),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_multi_action_unsupported_scripts_stay_unknown() {
+        for script in [
+            "$cmd='git'; & $cmd status --short; pnpm test",
+            "git status --short; Get-Process | Where-Object { $_.Name.ToLower().Contains('node') }",
+            "npm exec -c 'vite build'",
+            "cross-env-shell NODE_ENV=test 'npm test'",
+        ] {
+            assert_parsed(
+                &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+                vec![ParsedCommand::Unknown {
+                    cmd: script.to_string(),
+                }],
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_encoded_command_stays_raw_unknown() {
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-EncodedCommand", "ZwBpAHQA"]),
+            vec![ParsedCommand::Unknown {
+                cmd: "pwsh -NoProfile -EncodedCommand ZwBpAHQA".to_string(),
             }],
         );
     }

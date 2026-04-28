@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use super::action_summary::ActionSummary;
 use super::action_summary::summarize_call;
 use super::model::CommandOutput;
 use super::model::ExecCall;
@@ -432,6 +433,13 @@ impl ExecCell {
                     Span::from(layout.command_continuation.subsequent_prefix).dim(),
                 ));
             }
+            if !summary.subactions.is_empty() {
+                lines.extend(Self::grouped_action_lines(
+                    &summary.subactions,
+                    self.is_active(),
+                    width,
+                ));
+            }
             lines
         } else {
             let is_interaction = call.is_unified_exec_interaction();
@@ -567,6 +575,38 @@ impl ExecCell {
         }
 
         lines
+    }
+
+    fn grouped_action_lines(
+        subactions: &[ActionSummary],
+        active: bool,
+        width: u16,
+    ) -> Vec<Line<'static>> {
+        let mut out = Vec::new();
+        let prefix = Span::from("  │ ").dim();
+        let subsequent_prefix = Span::from("    ").dim();
+        let wrap_width = (width as usize).saturating_sub(prefix.width()).max(1);
+
+        for subaction in subactions {
+            let mut line = Line::from(vec![subaction.verb(active).cyan()]);
+            if let Some(detail) = &subaction.detail {
+                line.push_span(" ");
+                line.push_span(detail.clone().dim());
+            }
+            let wrapped = adaptive_wrap_line(
+                &line,
+                RtOptions::new(wrap_width).word_splitter(WordSplitter::NoHyphenation),
+            );
+            let mut owned = Vec::new();
+            push_owned_lines(&wrapped, &mut owned);
+            out.extend(prefix_lines(
+                owned,
+                prefix.clone(),
+                subsequent_prefix.clone(),
+            ));
+        }
+
+        out
     }
 
     fn limit_lines_from_start(lines: &[Line<'static>], keep: usize) -> Vec<Line<'static>> {
@@ -1054,6 +1094,152 @@ mod tests {
         insta::assert_snapshot!(rendered, @r#"
 • Tested cargo test -p codex-tui
   └ ok
+"#);
+    }
+
+    #[test]
+    fn grouped_action_command_display_uses_compact_snapshot() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec![
+                "pwsh".into(),
+                "-NoProfile".into(),
+                "-Command".into(),
+                "Set-Location src; git status --short; pnpm test; dotnet test".into(),
+            ],
+            parsed: vec![
+                ParsedCommand::Action {
+                    cmd: "git status --short".to_string(),
+                    kind: ParsedCommandActionKind::Git,
+                    detail: Some("git status --short".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("pnpm test".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "dotnet test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("dotnet test".to_string()),
+                },
+            ],
+            output: Some(CommandOutput {
+                exit_code: 0,
+                formatted_output: String::new(),
+                aggregated_output: "ok".to_string(),
+            }),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let rendered = ExecCell::new(call, /*animations_enabled*/ false)
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+
+        insta::assert_snapshot!(rendered, @r#"
+• Ran 3 commands
+  │ Checked git git status --short
+  │ Tested pnpm test
+  │ Tested dotnet test
+  └ ok
+"#);
+    }
+
+    #[test]
+    fn grouped_active_action_command_display_uses_active_verbs() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec![
+                "pwsh".into(),
+                "-NoProfile".into(),
+                "-Command".into(),
+                "git status --short; pnpm test; dotnet test".into(),
+            ],
+            parsed: vec![
+                ParsedCommand::Action {
+                    cmd: "git status --short".to_string(),
+                    kind: ParsedCommandActionKind::Git,
+                    detail: Some("git status --short".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("pnpm test".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "dotnet test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("dotnet test".to_string()),
+                },
+            ],
+            output: None,
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let rendered = ExecCell::new(call, /*animations_enabled*/ false)
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+
+        insta::assert_snapshot!(rendered, @r#"
+• Running 3 commands
+  │ Checking git git status --short
+  │ Testing pnpm test
+  │ Testing dotnet test
+"#);
+    }
+
+    #[test]
+    fn user_shell_command_display_stays_raw_snapshot() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec![
+                "pwsh".into(),
+                "-NoProfile".into(),
+                "-Command".into(),
+                "git status --short; pnpm test; dotnet test".into(),
+            ],
+            parsed: vec![
+                ParsedCommand::Action {
+                    cmd: "git status --short".to_string(),
+                    kind: ParsedCommandActionKind::Git,
+                    detail: Some("git status --short".to_string()),
+                },
+                ParsedCommand::Action {
+                    cmd: "pnpm test".to_string(),
+                    kind: ParsedCommandActionKind::Test,
+                    detail: Some("pnpm test".to_string()),
+                },
+            ],
+            output: Some(CommandOutput {
+                exit_code: 0,
+                formatted_output: String::new(),
+                aggregated_output: String::new(),
+            }),
+            source: ExecCommandSource::UserShell,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let rendered = ExecCell::new(call, /*animations_enabled*/ false)
+            .display_lines(/*width*/ 120)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+
+        insta::assert_snapshot!(rendered, @r#"
+• You ran git status --short; pnpm test; dotnet test
+  └ (no output)
 "#);
     }
 
