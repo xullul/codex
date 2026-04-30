@@ -541,6 +541,9 @@ pub(crate) enum AppEvent {
         orchestration_mode: OrchestrationModeConfigToml,
     },
 
+    /// Enable the daily coding preset by persisting full orchestration and preferred exploration.
+    EnableAgenticCodingPreset,
+
     /// Clear all persisted local memory artifacts via the app-server.
     ResetMemories,
 

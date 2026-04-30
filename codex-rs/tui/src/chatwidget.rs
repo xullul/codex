@@ -29,6 +29,7 @@
 //! Slash-command parsing lives in the bottom-pane composer, but slash-command acceptance lives
 //! here. That split lets the composer stage a recall entry before clearing input while this module
 //! records the attempted slash command after dispatch just like ordinary submitted text.
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -55,6 +56,7 @@ use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::StatusLineSetupView;
 use crate::bottom_pane::StatusSurfacePreviewData;
 use crate::bottom_pane::StatusSurfacePreviewItem;
+use crate::bottom_pane::SubagentActivityRow;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
@@ -341,6 +343,10 @@ use crate::collaboration_modes;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCell;
+use crate::exec_cell::ExecOutputTail;
+use crate::exec_cell::ExecStatusSummary;
+use crate::exec_cell::combine_exec_status_summaries;
+use crate::exec_cell::exec_status_summary;
 use crate::exec_cell::new_active_exec_command;
 use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
@@ -419,6 +425,9 @@ struct RunningCommand {
     command: Vec<String>,
     parsed_cmd: Vec<ParsedCommand>,
     source: ExecCommandSource,
+    interaction_input: Option<String>,
+    started_order: u64,
+    output_tail: ExecOutputTail,
 }
 
 struct UnifiedExecProcessSummary {
@@ -845,6 +854,7 @@ pub(crate) struct ChatWidget {
     /// emitted.
     saw_copy_source_this_turn: bool,
     running_commands: HashMap<String, RunningCommand>,
+    running_command_sequence: u64,
     collab_agent_metadata: HashMap<ThreadId, CollabAgentMetadata>,
     pending_collab_spawn_requests: HashMap<String, multi_agents::SpawnRequestSummary>,
     suppressed_exec_calls: HashSet<String>,
@@ -1944,6 +1954,60 @@ impl ChatWidget {
         );
     }
 
+    fn set_exec_status(&mut self, summary: ExecStatusSummary) {
+        self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
+        let details_max_lines = summary
+            .details
+            .as_deref()
+            .map(|details| {
+                details
+                    .lines()
+                    .count()
+                    .clamp(1, STATUS_DETAILS_DEFAULT_MAX_LINES)
+            })
+            .unwrap_or(1);
+        self.set_status(
+            summary.header,
+            summary.details,
+            StatusDetailsCapitalization::Preserve,
+            details_max_lines,
+        );
+    }
+
+    fn running_exec_status(&self) -> Option<ExecStatusSummary> {
+        let mut running: Vec<_> = self
+            .running_commands
+            .iter()
+            .filter(|(call_id, _)| !self.suppressed_exec_calls.contains(*call_id))
+            .collect();
+        running.sort_by_key(|(_, running)| Reverse(running.started_order));
+        combine_exec_status_summaries(
+            running
+                .into_iter()
+                .map(|(_, running)| {
+                    let mut summary = exec_status_summary(
+                        &running.command,
+                        &running.parsed_cmd,
+                        running.source,
+                        running.interaction_input.as_deref(),
+                    );
+                    summary.details = running
+                        .output_tail
+                        .append_to_details(summary.details, STATUS_DETAILS_DEFAULT_MAX_LINES);
+                    summary
+                })
+                .collect(),
+        )
+    }
+
+    fn refresh_running_exec_status(&mut self) -> bool {
+        let Some(summary) = self.running_exec_status() else {
+            return false;
+        };
+        self.set_exec_status(summary);
+        true
+    }
+
     /// Sets the currently rendered footer status-line value.
     pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
         self.bottom_pane.set_status_line(status_line);
@@ -1955,6 +2019,14 @@ impl ChatWidget {
     /// user actually looking at?" and the footer stack remains a pure renderer of that decision.
     pub(crate) fn set_active_agent_label(&mut self, active_agent_label: Option<String>) {
         self.bottom_pane.set_active_agent_label(active_agent_label);
+    }
+
+    pub(crate) fn set_subagent_activity(&mut self, rows: Vec<SubagentActivityRow>) {
+        self.bottom_pane.set_subagent_activity(rows);
+    }
+
+    pub(crate) fn clear_subagent_activity(&mut self) {
+        self.bottom_pane.clear_subagent_activity();
     }
 
     /// Recomputes footer status-line content from config and current runtime state.
@@ -2529,6 +2601,8 @@ impl ChatWidget {
         self.plan_item_active = false;
         self.adaptive_chunking.reset();
         self.plan_stream_controller = None;
+        self.bottom_pane.clear_plan_checklist();
+        self.bottom_pane.clear_subagent_activity();
         self.turn_runtime_metrics = RuntimeMetricsSummary::default();
         self.session_telemetry.reset_runtime_metrics();
         self.bottom_pane.clear_quit_shortcut_hint();
@@ -2551,6 +2625,8 @@ impl ChatWidget {
 
     fn on_task_complete(&mut self, last_agent_message: Option<String>, from_replay: bool) {
         self.submit_pending_steers_after_interrupt = false;
+        self.bottom_pane.clear_plan_checklist();
+        self.bottom_pane.clear_subagent_activity();
         // Use `last_agent_message` from the turn-complete notification as the copy
         // source only when no earlier item-level event (AgentMessageItem, plan
         // commit, review output) already recorded markdown for this turn. This
@@ -2810,17 +2886,17 @@ impl ChatWidget {
             (
                 ExplorationSubagentsConfigToml::Prefer,
                 "Prefer",
-                "Default to explorer subagents for read-only repository discovery.",
+                "Proactively use explorer subagents to keep repository context lean.",
             ),
             (
                 ExplorationSubagentsConfigToml::Auto,
                 "Auto",
-                "Use explorer subagents for large or multi-topic repository discovery.",
+                "Use explorer subagents for large or multi-topic discovery.",
             ),
             (
                 ExplorationSubagentsConfigToml::Less,
                 "Less",
-                "Use explorer subagents only when explicitly requested.",
+                "Only use explorer subagents when the request clearly asks for them.",
             ),
             (
                 ExplorationSubagentsConfigToml::Disable,
@@ -2851,7 +2927,7 @@ impl ChatWidget {
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Subagent Configuration".to_string()),
             subtitle: Some(
-                "Choose how proactively Codex delegates codebase exploration.".to_string(),
+                "Choose how Codex keeps exploration out of the main context.".to_string(),
             ),
             footer_hint: Some(standard_popup_hint_line()),
             items,
@@ -2862,39 +2938,64 @@ impl ChatWidget {
 
     pub(crate) fn open_orchestration_mode_popup(&mut self) {
         let current = self.config.multi_agent_v2.orchestration_mode_config_toml();
+        let current_exploration = self
+            .config
+            .multi_agent_v2
+            .exploration_subagents_config_toml();
+        let agentic_coding_is_current = current == OrchestrationModeConfigToml::Full
+            && current_exploration == ExplorationSubagentsConfigToml::Prefer;
+        enum OrchestrationSelection {
+            AgenticCoding,
+            Mode(OrchestrationModeConfigToml),
+        }
         let options = [
             (
-                OrchestrationModeConfigToml::Full,
+                OrchestrationSelection::AgenticCoding,
+                "Agentic coding",
+                "Full orchestration plus preferred exploration subagents.",
+                agentic_coding_is_current,
+            ),
+            (
+                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Full),
                 "Full",
-                "Use explorer and worker agents for separable complex work.",
+                "Use explorer and worker agents for separable coding work.",
+                current == OrchestrationModeConfigToml::Full && !agentic_coding_is_current,
             ),
             (
-                OrchestrationModeConfigToml::Explore,
+                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Explore),
                 "Explore",
-                "Prefer explorer agents for broad discovery.",
+                "Prefer explorer agents for broad repository discovery.",
+                current == OrchestrationModeConfigToml::Explore,
             ),
             (
-                OrchestrationModeConfigToml::Work,
+                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Work),
                 "Work",
                 "Prefer worker agents for disjoint implementation scopes.",
+                current == OrchestrationModeConfigToml::Work,
             ),
             (
-                OrchestrationModeConfigToml::Disable,
+                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Disable),
                 "Disable",
                 "Do not add orchestration guidance.",
+                current == OrchestrationModeConfigToml::Disable,
             ),
         ];
-        let initial_selected_idx = options.iter().position(|(mode, _, _)| *mode == current);
+        let initial_selected_idx = options.iter().position(|(_, _, _, is_current)| *is_current);
         let items = options
             .into_iter()
-            .map(|(orchestration_mode, name, description)| {
-                let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::UpdateOrchestrationMode { orchestration_mode });
-                })];
+            .map(|(selection, name, description, is_current)| {
+                let actions: Vec<SelectionAction> = match selection {
+                    OrchestrationSelection::AgenticCoding => vec![Box::new(|tx| {
+                        tx.send(AppEvent::EnableAgenticCodingPreset);
+                    })],
+                    OrchestrationSelection::Mode(orchestration_mode) => vec![Box::new(move |tx| {
+                        tx.send(AppEvent::UpdateOrchestrationMode { orchestration_mode });
+                    })],
+                };
                 SelectionItem {
                     name: name.to_string(),
                     description: Some(description.to_string()),
-                    is_current: orchestration_mode == current,
+                    is_current,
                     actions,
                     dismiss_on_select: true,
                     ..Default::default()
@@ -2903,8 +3004,10 @@ impl ChatWidget {
             .collect();
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Orchestration Mode".to_string()),
-            subtitle: Some("Choose how Codex should use subagents for future turns.".to_string()),
+            title: Some("Agent Orchestration".to_string()),
+            subtitle: Some(
+                "Choose how Codex should split exploration and implementation.".to_string(),
+            ),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             initial_selected_idx,
@@ -3775,6 +3878,7 @@ impl ChatWidget {
             })
             .count();
         self.last_plan_progress = (total > 0).then_some((completed, total));
+        self.bottom_pane.set_plan_checklist(update.plan.clone());
         self.refresh_status_surfaces();
         self.add_to_history(history_cell::new_plan_update(update));
     }
@@ -4049,6 +4153,17 @@ impl ChatWidget {
 
     fn on_exec_command_output_delta(&mut self, ev: ExecCommandOutputDeltaEvent) {
         self.track_unified_exec_output_chunk(&ev.call_id, &ev.chunk);
+        let output_tail_changed = if self.suppressed_exec_calls.contains(&ev.call_id) {
+            false
+        } else {
+            self.running_commands
+                .get_mut(&ev.call_id)
+                .map(|running| running.output_tail.append(&ev.chunk))
+                .unwrap_or(false)
+        };
+        if output_tail_changed && self.bottom_pane.is_task_running() {
+            self.refresh_running_exec_status();
+        }
         if !self.bottom_pane.is_task_running() {
             return;
         }
@@ -4999,6 +5114,9 @@ impl ChatWidget {
         }
         // Mark that actual work was done (command executed)
         self.had_work_activity = true;
+        if self.bottom_pane.is_task_running() && !self.refresh_running_exec_status() {
+            self.restore_reasoning_status_header();
+        }
         if is_user_shell {
             self.maybe_send_next_queued_input();
         }
@@ -5131,12 +5249,18 @@ impl ChatWidget {
         // Ensure the status indicator is visible while the command runs.
         self.bottom_pane.ensure_status_indicator();
         let parsed_cmd = self.annotate_skill_reads_in_parsed_cmd(ev.parsed_cmd.clone());
+        let interaction_input = ev.interaction_input.clone();
+        self.running_command_sequence = self.running_command_sequence.saturating_add(1);
+        let started_order = self.running_command_sequence;
         self.running_commands.insert(
             ev.call_id.clone(),
             RunningCommand {
                 command: ev.command.clone(),
                 parsed_cmd: parsed_cmd.clone(),
                 source: ev.source,
+                interaction_input: interaction_input.clone(),
+                started_order,
+                output_tail: ExecOutputTail::default(),
             },
         );
         let is_wait_interaction = matches!(ev.source, ExecCommandSource::UnifiedExecInteraction)
@@ -5160,7 +5284,7 @@ impl ChatWidget {
             self.suppressed_exec_calls.insert(ev.call_id);
             return;
         }
-        let interaction_input = ev.interaction_input.clone();
+        self.refresh_running_exec_status();
         if let Some(cell) = self
             .active_cell
             .as_mut()
@@ -5341,6 +5465,7 @@ impl ChatWidget {
             plan_stream_controller: None,
             clipboard_lease: None,
             running_commands: HashMap::new(),
+            running_command_sequence: 0,
             collab_agent_metadata: HashMap::new(),
             pending_collab_spawn_requests: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),

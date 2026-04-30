@@ -10,7 +10,7 @@ use crate::render::renderable::Renderable;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_lines;
 
-/// Widget that displays pending steers plus follow-up inputs held while a turn is in progress.
+/// Widget that displays current-turn steers plus follow-up inputs held while a turn is in progress.
 ///
 /// The widget renders pending steers first, then rejected steers that will be
 /// resubmitted at end of turn, then ordinary queued user messages. Pending
@@ -85,7 +85,7 @@ impl PendingInputPreview {
                 &mut lines,
                 width,
                 Line::from(vec![
-                    "Messages to be submitted after next tool call".into(),
+                    "Current-turn messages after next tool call".into(),
                     " (press ".dim(),
                     key_hint::plain(KeyCode::Esc).into(),
                     " to interrupt and send immediately)".dim(),
@@ -110,7 +110,7 @@ impl PendingInputPreview {
             Self::push_section_header(
                 &mut lines,
                 width,
-                "Messages to be submitted at end of turn".into(),
+                "Messages queued until this turn ends".into(),
             );
 
             for steer in &self.rejected_steers {
@@ -128,7 +128,7 @@ impl PendingInputPreview {
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
-            Self::push_section_header(&mut lines, width, "Queued follow-up inputs".into());
+            Self::push_section_header(&mut lines, width, "Follow-ups queued for next turn".into());
 
             for message in &self.queued_messages {
                 let wrapped = adaptive_wrap_lines(

@@ -69,14 +69,17 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath "$exe.sha256" -Value "$hash  codex-xullul-windows-x64.exe" -Encoding ASCII
 
+          $installUrl = "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag }}/install-codex-xullul.ps1"
           $notes = @"
           Personal codex-xullul Windows x64 release.
 
-          Install with:
+          Install from PowerShell:
 
-          ```powershell
-          irm https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag }}/install-codex-xullul.ps1 | iex
-          ```
+              irm '$installUrl' | iex
+
+          Install from cmd.exe or Run:
+
+              powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm '$installUrl' | iex"
           "@
           Set-Content -LiteralPath (Join-Path $dist "release-notes.md") -Value $notes -Encoding UTF8
 

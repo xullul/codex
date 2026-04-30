@@ -6,6 +6,24 @@
 
 use super::*;
 
+fn multi_agent_v2_config_segments(active_profile: Option<&str>, key: &str) -> Vec<String> {
+    if let Some(profile) = active_profile {
+        vec![
+            "profiles".to_string(),
+            profile.to_string(),
+            "features".to_string(),
+            "multi_agent_v2".to_string(),
+            key.to_string(),
+        ]
+    } else {
+        vec![
+            "features".to_string(),
+            "multi_agent_v2".to_string(),
+            key.to_string(),
+        ]
+    }
+}
+
 impl App {
     pub(super) async fn rebuild_config_for_cwd(&self, cwd: PathBuf) -> Result<Config> {
         let mut overrides = self.harness_overrides.clone();
@@ -467,34 +485,20 @@ impl App {
         exploration_subagents: ExplorationSubagentsConfigToml,
     ) {
         let active_profile = self.active_profile.clone();
-        let scoped_segments = |key: &str| {
-            if let Some(profile) = active_profile.as_deref() {
-                vec![
-                    "profiles".to_string(),
-                    profile.to_string(),
-                    "features".to_string(),
-                    "multi_agent_v2".to_string(),
-                    key.to_string(),
-                ]
-            } else {
-                vec![
-                    "features".to_string(),
-                    "multi_agent_v2".to_string(),
-                    key.to_string(),
-                ]
-            }
-        };
         let enabled = self.config.features.enabled(Feature::MultiAgentV2);
         let mut next_multi_agent_v2 = self.config.multi_agent_v2.clone();
         next_multi_agent_v2.set_exploration_subagents_config_toml(exploration_subagents);
         let policy_value = next_multi_agent_v2.exploration_subagents_config_value();
         let edits = [
             ConfigEdit::SetPath {
-                segments: scoped_segments("enabled"),
+                segments: multi_agent_v2_config_segments(active_profile.as_deref(), "enabled"),
                 value: enabled.into(),
             },
             ConfigEdit::SetPath {
-                segments: scoped_segments("exploration_subagents"),
+                segments: multi_agent_v2_config_segments(
+                    active_profile.as_deref(),
+                    "exploration_subagents",
+                ),
                 value: policy_value.into(),
             },
         ];
@@ -527,23 +531,6 @@ impl App {
         orchestration_mode: OrchestrationModeConfigToml,
     ) {
         let active_profile = self.active_profile.clone();
-        let scoped_segments = |key: &str| {
-            if let Some(profile) = active_profile.as_deref() {
-                vec![
-                    "profiles".to_string(),
-                    profile.to_string(),
-                    "features".to_string(),
-                    "multi_agent_v2".to_string(),
-                    key.to_string(),
-                ]
-            } else {
-                vec![
-                    "features".to_string(),
-                    "multi_agent_v2".to_string(),
-                    key.to_string(),
-                ]
-            }
-        };
         let enabled = self.config.features.enabled(Feature::MultiAgentV2);
         let mut next_multi_agent_v2 = self.config.multi_agent_v2.clone();
         next_multi_agent_v2.set_orchestration_mode_config_toml(orchestration_mode);
@@ -557,17 +544,23 @@ impl App {
         let orchestration_value = next_multi_agent_v2.orchestration_mode_config_value();
         let mut edits = vec![
             ConfigEdit::SetPath {
-                segments: scoped_segments("enabled"),
+                segments: multi_agent_v2_config_segments(active_profile.as_deref(), "enabled"),
                 value: enabled.into(),
             },
             ConfigEdit::SetPath {
-                segments: scoped_segments("orchestration_mode"),
+                segments: multi_agent_v2_config_segments(
+                    active_profile.as_deref(),
+                    "orchestration_mode",
+                ),
                 value: orchestration_value.into(),
             },
         ];
         if auto_enable_exploration {
             edits.push(ConfigEdit::SetPath {
-                segments: scoped_segments("exploration_subagents"),
+                segments: multi_agent_v2_config_segments(
+                    active_profile.as_deref(),
+                    "exploration_subagents",
+                ),
                 value: next_multi_agent_v2
                     .exploration_subagents_config_value()
                     .into(),
@@ -606,6 +599,61 @@ impl App {
                 /*hint*/ None,
             );
         }
+    }
+
+    pub(super) async fn enable_agentic_coding_preset(&mut self) {
+        let active_profile = self.active_profile.clone();
+        let enabled = self.config.features.enabled(Feature::MultiAgentV2);
+        let mut next_multi_agent_v2 = self.config.multi_agent_v2.clone();
+        next_multi_agent_v2.set_orchestration_mode_config_toml(OrchestrationModeConfigToml::Full);
+        next_multi_agent_v2
+            .set_exploration_subagents_config_toml(ExplorationSubagentsConfigToml::Prefer);
+
+        let edits = [
+            ConfigEdit::SetPath {
+                segments: multi_agent_v2_config_segments(active_profile.as_deref(), "enabled"),
+                value: enabled.into(),
+            },
+            ConfigEdit::SetPath {
+                segments: multi_agent_v2_config_segments(
+                    active_profile.as_deref(),
+                    "orchestration_mode",
+                ),
+                value: next_multi_agent_v2.orchestration_mode_config_value().into(),
+            },
+            ConfigEdit::SetPath {
+                segments: multi_agent_v2_config_segments(
+                    active_profile.as_deref(),
+                    "exploration_subagents",
+                ),
+                value: next_multi_agent_v2
+                    .exploration_subagents_config_value()
+                    .into(),
+            },
+        ];
+
+        if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits(edits)
+            .apply()
+            .await
+        {
+            tracing::error!(error = %err, "failed to persist agentic coding preset");
+            self.chat_widget
+                .add_error_message(format!("Failed to save agentic coding preset: {err}"));
+            return;
+        }
+
+        self.config.multi_agent_v2 = next_multi_agent_v2;
+        self.chat_widget
+            .set_orchestration_mode(OrchestrationModeConfigToml::Full);
+        self.chat_widget
+            .set_subagent_config(ExplorationSubagentsConfigToml::Prefer);
+        self.chat_widget.submit_op(AppCommand::reload_user_config());
+        self.chat_widget.add_info_message(
+            "Agentic coding preset enabled: full orchestration and preferred exploration subagents."
+                .to_string(),
+            /*hint*/ None,
+        );
     }
 
     pub(super) async fn reset_memories_with_app_server(

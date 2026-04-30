@@ -1,0 +1,14 @@
+---
+source: tui/src/chatwidget/tests/plan_mode.rs
+expression: popup
+---
+• Working (0s • esc to interrupt)
+• Plan 1/3 complete
+  ✓ Explore Claude Code task surfaces
+  › Render live plan progress in the bottom pane
+  - Update focused TUI snapshots
+
+
+› Ask Codex to do anything
+
+  gpt-5.5 default · C:\tmp\project

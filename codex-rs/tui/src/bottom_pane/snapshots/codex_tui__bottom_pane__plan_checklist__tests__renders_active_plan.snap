@@ -1,0 +1,25 @@
+---
+source: tui/src/bottom_pane/plan_checklist.rs
+expression: "render(&checklist, 64)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 64, height: 4 },
+    content: [
+        "• Plan 1/3 complete                                             ",
+        "  ✓ Explore the current TUI progress surfaces                   ",
+        "  › Surface the live checklist above the composer               ",
+        "  - Update snapshots                                            ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 19, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 45, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 2, fg: Cyan, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 49, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 20, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

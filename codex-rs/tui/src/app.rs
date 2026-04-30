@@ -195,6 +195,7 @@ mod replay_filter;
 mod session_lifecycle;
 mod side;
 mod startup_prompts;
+mod subagent_activity;
 mod thread_events;
 mod thread_routing;
 mod thread_session_state;
@@ -209,6 +210,7 @@ use self::side::SideParentStatus;
 use self::side::SideParentStatusChange;
 use self::side::SideThreadState;
 use self::startup_prompts::*;
+use self::subagent_activity::SubagentActivityTracker;
 use self::thread_events::*;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
@@ -550,6 +552,7 @@ pub(crate) struct App {
     thread_event_channels: HashMap<ThreadId, ThreadEventChannel>,
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
     agent_navigation: AgentNavigationState,
+    subagent_activity: SubagentActivityTracker,
     side_threads: HashMap<ThreadId, SideThreadState>,
     active_thread_id: Option<ThreadId>,
     active_thread_rx: Option<mpsc::Receiver<ThreadBufferedEvent>>,
@@ -911,6 +914,7 @@ impl App {
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
+            subagent_activity: SubagentActivityTracker::default(),
             side_threads: HashMap::new(),
             active_thread_id: None,
             active_thread_rx: None,

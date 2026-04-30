@@ -121,6 +121,7 @@
 //! overall state machine, since it affects which transitions are even possible from a given UI
 //! state.
 //!
+use crate::bottom_pane::footer::compact_mode_indicator_line;
 use crate::bottom_pane::footer::mode_indicator_line;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
@@ -3972,10 +3973,8 @@ impl ChatComposer {
                     } else if status_line_active {
                         let full =
                             mode_indicator_line(self.collaboration_mode_indicator, show_cycle_hint);
-                        let compact = mode_indicator_line(
-                            self.collaboration_mode_indicator,
-                            /*show_cycle_hint*/ false,
-                        );
+                        let compact =
+                            compact_mode_indicator_line(self.collaboration_mode_indicator);
                         let full_width = full.as_ref().map(|l| l.width() as u16).unwrap_or(0);
                         if can_show_left_with_context(hint_rect, left_width, full_width) {
                             full

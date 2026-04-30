@@ -1,4 +1,5 @@
 use super::*;
+use codex_protocol::protocol::ExecOutputStream;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -220,6 +221,7 @@ pub(super) async fn make_chatwidget_manual(
         latest_proposed_plan_markdown: None,
         saw_copy_source_this_turn: false,
         running_commands: HashMap::new(),
+        running_command_sequence: 0,
         collab_agent_metadata: HashMap::new(),
         pending_collab_spawn_requests: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),
@@ -672,6 +674,17 @@ pub(super) fn end_exec(
             } else {
                 CoreExecCommandStatus::Failed
             },
+        }),
+    });
+}
+
+pub(super) fn exec_output_delta(chat: &mut ChatWidget, call_id: &str, chunk: &str) {
+    chat.handle_codex_event(Event {
+        id: format!("delta-{call_id}"),
+        msg: EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
+            call_id: call_id.to_string(),
+            stream: ExecOutputStream::Stdout,
+            chunk: chunk.as_bytes().to_vec(),
         }),
     });
 }

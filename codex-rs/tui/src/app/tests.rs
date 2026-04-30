@@ -1624,6 +1624,76 @@ async fn update_orchestration_mode_persists_updates_widget_and_reloads_session()
 }
 
 #[tokio::test]
+async fn enable_agentic_coding_preset_persists_both_multi_agent_settings() -> Result<()> {
+    let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let codex_home = tempdir()?;
+    app.config.codex_home = codex_home.path().to_path_buf().abs();
+    let enabled = app.config.features.enabled(Feature::MultiAgentV2);
+
+    app.enable_agentic_coding_preset().await;
+
+    assert_eq!(
+        app.config.multi_agent_v2.orchestration_mode_config_toml(),
+        OrchestrationModeConfigToml::Full
+    );
+    assert_eq!(
+        app.config
+            .multi_agent_v2
+            .exploration_subagents_config_toml(),
+        ExplorationSubagentsConfigToml::Prefer
+    );
+    assert_eq!(
+        app.chat_widget
+            .config_ref()
+            .multi_agent_v2
+            .orchestration_mode_config_toml(),
+        OrchestrationModeConfigToml::Full
+    );
+    assert_eq!(
+        app.chat_widget
+            .config_ref()
+            .multi_agent_v2
+            .exploration_subagents_config_toml(),
+        ExplorationSubagentsConfigToml::Prefer
+    );
+
+    let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
+    let config_value = toml::from_str::<TomlValue>(&config)?;
+    let multi_agent_v2 = config_value
+        .as_table()
+        .and_then(|table| table.get("features"))
+        .and_then(TomlValue::as_table)
+        .and_then(|features| features.get("multi_agent_v2"))
+        .and_then(TomlValue::as_table)
+        .expect("multi_agent_v2 table should exist");
+    assert_eq!(
+        multi_agent_v2.get("enabled"),
+        Some(&TomlValue::Boolean(enabled))
+    );
+    assert_eq!(
+        multi_agent_v2.get("orchestration_mode"),
+        Some(&TomlValue::String("full".to_string()))
+    );
+    assert_eq!(
+        multi_agent_v2.get("exploration_subagents"),
+        Some(&TomlValue::String("prefer".to_string()))
+    );
+    assert_eq!(op_rx.try_recv(), Ok(Op::ReloadUserConfig));
+    let preset_cell = match app_event_rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => cell,
+        other => panic!("expected preset info cell, got {other:?}"),
+    };
+    let rendered = lines_to_single_string(&preset_cell.display_lines(/*width*/ 120));
+    assert!(
+        rendered.contains(
+            "Agentic coding preset enabled: full orchestration and preferred exploration subagents."
+        ),
+        "unexpected info cell: {rendered}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_orchestration_mode_auto_enables_disabled_exploration() -> Result<()> {
     let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
@@ -3857,6 +3927,7 @@ async fn make_test_app() -> App {
         thread_event_channels: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
         agent_navigation: AgentNavigationState::default(),
+        subagent_activity: SubagentActivityTracker::default(),
         side_threads: HashMap::new(),
         active_thread_id: None,
         active_thread_rx: None,
@@ -3914,6 +3985,7 @@ async fn make_test_app_with_channels() -> (
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
+            subagent_activity: SubagentActivityTracker::default(),
             side_threads: HashMap::new(),
             active_thread_id: None,
             active_thread_rx: None,

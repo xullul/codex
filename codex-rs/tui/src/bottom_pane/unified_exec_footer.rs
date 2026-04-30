@@ -48,9 +48,29 @@ impl UnifiedExecFooter {
         }
 
         let count = self.processes.len();
-        let plural = if count == 1 { "" } else { "s" };
+        let noun = if count == 1 {
+            "bg terminal"
+        } else {
+            "bg terminals"
+        };
+        let first = self
+            .processes
+            .first()
+            .map(|process| process.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|process| !process.is_empty());
+        let process_summary = match (first, count) {
+            (Some(process), 1) => format!(": {process}"),
+            (Some(process), count) => format!(": {process} +{} more", count - 1),
+            (None, 1) => String::new(),
+            (None, count) => format!(": +{} more", count - 1),
+        };
+        let running = if process_summary.is_empty() {
+            " running"
+        } else {
+            ""
+        };
         Some(format!(
-            "{count} background terminal{plural} running · /ps to view · /stop to close"
+            "{count} {noun}{running}{process_summary} · /ps · /stop"
         ))
     }
 

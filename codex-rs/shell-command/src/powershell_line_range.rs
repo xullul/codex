@@ -355,11 +355,16 @@ fn foreach_line_number_projection_counter(statement: &str) -> Option<String> {
     }
     let body = &rest[1..body_end];
     let statements = split_top_level_statements(body)?;
-    let [format_statement, increment_statement] = statements.as_slice() else {
+    let [first_statement, second_statement] = statements.as_slice() else {
         return None;
     };
-    let counter_var = increment_variable(increment_statement)?;
-    is_streaming_line_number_format_expression(format_statement, &counter_var)
+    if let Some(counter_var) = increment_variable(second_statement)
+        && is_streaming_line_number_format_expression(first_statement, &counter_var)
+    {
+        return Some(counter_var);
+    }
+    let counter_var = increment_variable(first_statement)?;
+    is_streaming_guarded_line_number_format_expression(second_statement, &counter_var)
         .then_some(counter_var)
 }
 
@@ -384,6 +389,62 @@ fn is_streaming_line_number_format_expression(expression: &str, counter_var: &st
     }
     let rest = remove_ascii_whitespace(rest).to_ascii_lowercase();
     rest == format!("-f${counter_var},$_")
+}
+
+fn is_streaming_guarded_line_number_format_expression(statement: &str, counter_var: &str) -> bool {
+    let rest = match strip_optional_numeric_range_guard(statement, counter_var) {
+        Some(rest) => rest,
+        None => return false,
+    };
+    is_streaming_line_number_format_expression(rest, counter_var)
+}
+
+fn strip_optional_numeric_range_guard<'a>(body: &'a str, counter_var: &str) -> Option<&'a str> {
+    let rest = strip_case_insensitive_keyword(body.trim(), "if")?.trim_start();
+    if !rest.starts_with('(') {
+        return None;
+    }
+    let condition_end = matching_delimiter(rest, 0, '(', ')')?;
+    let condition = remove_ascii_whitespace(&rest[1..condition_end]).to_ascii_lowercase();
+    if !is_supported_numeric_range_guard(&condition, counter_var) {
+        return None;
+    }
+
+    let rest = rest[condition_end + 1..].trim_start();
+    if !rest.starts_with('{') {
+        return None;
+    }
+    let body_end = matching_delimiter(rest, 0, '{', '}')?;
+    rest[body_end + 1..]
+        .trim()
+        .is_empty()
+        .then(|| rest[1..body_end].trim())
+}
+
+fn is_supported_numeric_range_guard(condition: &str, counter_var: &str) -> bool {
+    let Some((left, right)) = condition.split_once("-and") else {
+        return false;
+    };
+    (is_numeric_lower_bound(left, counter_var) && is_numeric_upper_bound(right, counter_var))
+        || (is_numeric_upper_bound(left, counter_var) && is_numeric_lower_bound(right, counter_var))
+}
+
+fn is_numeric_lower_bound(value: &str, counter_var: &str) -> bool {
+    let value = strip_wrapping_parens(value);
+    ["-ge", "-gt"].into_iter().any(|op| {
+        value
+            .strip_prefix(&format!("${counter_var}{op}"))
+            .is_some_and(is_numeric_literal)
+    })
+}
+
+fn is_numeric_upper_bound(value: &str, counter_var: &str) -> bool {
+    let value = strip_wrapping_parens(value);
+    ["-le", "-lt"].into_iter().any(|op| {
+        value
+            .strip_prefix(&format!("${counter_var}{op}"))
+            .is_some_and(is_numeric_literal)
+    })
 }
 
 fn resolve_read_target(path_binding: Option<&(String, String)>, read_target: ReadTarget) -> String {

@@ -801,6 +801,113 @@ async fn unified_exec_wait_status_renders_command_in_single_details_row_snapshot
 }
 
 #[tokio::test]
+async fn exec_begin_updates_working_status_with_semantic_activity_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let begin = begin_exec(&mut chat, "call-test-status", "cargo test -p codex-tui");
+
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should be visible");
+    assert_eq!(status.header(), "Testing");
+    assert_eq!(status.details(), Some("cargo test -p codex-tui"));
+
+    let rendered = render_bottom_popup(&chat, /*width*/ 52);
+    assert_chatwidget_snapshot!(
+        "exec_begin_status_semantic_activity",
+        normalize_snapshot_paths(rendered)
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should still be visible while the turn runs");
+    assert_eq!(status.header(), "Working");
+    assert_eq!(status.details(), None);
+}
+
+#[tokio::test]
+async fn concurrent_exec_status_lists_secondary_activity_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let read = begin_exec(&mut chat, "call-read-status", "cat src/main.rs");
+    let test = begin_exec(&mut chat, "call-test-status", "cargo test -p codex-tui");
+
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should be visible");
+    assert_eq!(status.header(), "Testing");
+    assert_eq!(
+        status.details(),
+        Some("cargo test -p codex-tui\nAlso active: Read main.rs")
+    );
+
+    let rendered = render_bottom_popup(&chat, /*width*/ 58);
+    assert_chatwidget_snapshot!(
+        "concurrent_exec_status_lists_secondary_activity",
+        normalize_snapshot_paths(rendered)
+    );
+
+    end_exec(&mut chat, test, "", "", /*exit_code*/ 0);
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should remain visible for the earlier command");
+    assert_eq!(status.header(), "Read");
+    assert_eq!(status.details(), Some("main.rs"));
+
+    end_exec(&mut chat, read, "", "", /*exit_code*/ 0);
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should still be visible while the turn runs");
+    assert_eq!(status.header(), "Working");
+    assert_eq!(status.details(), None);
+}
+
+#[tokio::test]
+async fn exec_output_delta_updates_live_status_tail_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let begin = begin_exec(
+        &mut chat,
+        "call-test-output-status",
+        "cargo test -p codex-tui",
+    );
+    exec_output_delta(
+        &mut chat,
+        "call-test-output-status",
+        "Compiling codex-tui v0.0.0\nrunning 1819 tests\n",
+    );
+
+    let status = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status indicator should be visible");
+    assert_eq!(status.header(), "Testing");
+    assert_eq!(
+        status.details(),
+        Some(
+            "cargo test -p codex-tui\nOutput: Compiling codex-tui v0.0.0\n        running 1819 tests"
+        )
+    );
+
+    let rendered = render_bottom_popup(&chat, /*width*/ 64);
+    assert_chatwidget_snapshot!(
+        "exec_output_delta_live_status_tail",
+        normalize_snapshot_paths(rendered)
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+}
+
+#[tokio::test]
 async fn unified_exec_empty_then_non_empty_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
@@ -1253,6 +1360,49 @@ async fn powershell_exec_renders_semantic_streaming_line_read_and_keeps_raw_tran
         normalized_transcript.contains("ForEach-Object")
             && normalized_transcript.contains("Select-Object -Skip 680 -First 100"),
         "expected transcript to keep raw streaming read command, got {transcript}"
+    );
+
+    end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
+}
+
+#[tokio::test]
+async fn powershell_exec_renders_semantic_increment_first_streaming_line_read() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let raw_cmd = "Set-Location -LiteralPath C:\\Users\\Keenu\\KeenuProjects\\mantra; $i=0; Get-Content src\\engine\\duel.ts | ForEach-Object { $i++; if($i -ge 3578 -and $i -le 3608){ '{0,5}: {1}' -f $i, $_ } }";
+    let command = vec![
+        "powershell.exe".to_string(),
+        "-Command".to_string(),
+        raw_cmd.to_string(),
+    ];
+    let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
+    let begin = ExecCommandBeginEvent {
+        call_id: "powershell-increment-first-streaming-line-read".to_string(),
+        process_id: None,
+        turn_id: "turn-1".to_string(),
+        command,
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        parsed_cmd,
+        source: ExecCommandSource::Agent,
+        interaction_input: None,
+    };
+
+    chat.handle_codex_event(Event {
+        id: "powershell-increment-first-streaming-line-read-begin".to_string(),
+        msg: EventMsg::ExecCommandBegin(begin.clone()),
+    });
+
+    let active = active_blob(&chat);
+    assert!(
+        !active.contains("ForEach-Object"),
+        "expected semantic summary instead of raw ForEach-Object, got {active}"
+    );
+    assert!(
+        active.contains("Read duel.ts"),
+        "expected semantic file read, got {active}"
+    );
+    assert_chatwidget_snapshot!(
+        "powershell_semantic_increment_first_streaming_line_read_active",
+        active
     );
 
     end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
@@ -2449,20 +2599,21 @@ async fn apply_patch_untrusted_shows_approval_modal() -> anyhow::Result<()> {
     let mut buf = Buffer::empty(area);
     chat.render(area, &mut buf);
 
+    let expected_title = "Apply these edits?";
     let mut contains_title = false;
     for y in 0..area.height {
         let mut row = String::new();
         for x in 0..area.width {
             row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
         }
-        if row.contains("Would you like to make the following edits?") {
+        if row.contains(expected_title) {
             contains_title = true;
             break;
         }
     }
     assert!(
         contains_title,
-        "expected approval modal to be visible with title 'Would you like to make the following edits?'"
+        "expected approval modal to be visible with title '{expected_title}'"
     );
 
     Ok(())

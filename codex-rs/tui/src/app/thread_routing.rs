@@ -185,6 +185,7 @@ impl App {
             .agent_navigation
             .active_agent_label(self.current_displayed_thread_id(), self.primary_thread_id);
         self.chat_widget.set_active_agent_label(label);
+        self.refresh_subagent_activity_panel();
         self.sync_side_thread_ui();
     }
 
@@ -788,6 +789,22 @@ impl App {
         let inferred_session = self
             .infer_session_for_thread_notification(thread_id, &notification)
             .await;
+        let primary_thread_notification = self.primary_thread_id == Some(thread_id);
+        if primary_thread_notification
+            && matches!(
+                &notification,
+                ServerNotification::TurnStarted(_) | ServerNotification::TurnCompleted(_)
+            )
+        {
+            self.clear_subagent_activity_panel();
+        }
+        let subagent_activity_changed = if primary_thread_notification {
+            false
+        } else {
+            let label = self.thread_label(thread_id);
+            self.subagent_activity
+                .note_notification(thread_id, label, &notification)
+        };
         let (sender, store) = {
             let channel = self.ensure_thread_channel(thread_id);
             (channel.sender.clone(), Arc::clone(&channel.store))
@@ -826,6 +843,9 @@ impl App {
             self.apply_side_parent_status_change(thread_id, change);
         }
         self.refresh_pending_thread_approvals().await;
+        if subagent_activity_changed {
+            self.refresh_subagent_activity_panel();
+        }
         Ok(())
     }
 

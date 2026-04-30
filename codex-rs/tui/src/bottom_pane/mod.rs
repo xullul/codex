@@ -20,6 +20,8 @@ use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::pending_input_preview::PendingInputPreview;
 use crate::bottom_pane::pending_thread_approvals::PendingThreadApprovals;
+use crate::bottom_pane::plan_checklist::PlanChecklist;
+use crate::bottom_pane::subagent_activity::SubagentActivity;
 use crate::bottom_pane::unified_exec_footer::UnifiedExecFooter;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
@@ -33,6 +35,7 @@ use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
 use codex_file_search::FileMatch;
 use codex_plugin::PluginCapabilitySummary;
+use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::request_user_input::RequestUserInputEvent;
 use codex_protocol::user_input::TextElement;
 use crossterm::event::KeyCode;
@@ -111,6 +114,8 @@ pub(crate) use status_line_setup::StatusLineItem;
 pub(crate) use status_line_setup::StatusLineSetupView;
 pub(crate) use status_surface_preview::StatusSurfacePreviewData;
 pub(crate) use status_surface_preview::StatusSurfacePreviewItem;
+pub(crate) use subagent_activity::SubagentActivityRow;
+pub(crate) use subagent_activity::SubagentActivityState;
 pub(crate) use title_setup::TerminalTitleItem;
 pub(crate) use title_setup::TerminalTitleSetupView;
 #[cfg(test)]
@@ -118,10 +123,12 @@ pub(crate) use title_setup::preview_line_for_title_items;
 mod paste_burst;
 mod pending_input_preview;
 mod pending_thread_approvals;
+mod plan_checklist;
 pub(crate) mod popup_consts;
 mod scroll_state;
 mod selection_popup_common;
 mod selection_tabs;
+mod subagent_activity;
 mod textarea;
 mod unified_exec_footer;
 pub(crate) use feedback_view::FeedbackNoteView;
@@ -197,6 +204,10 @@ pub(crate) struct BottomPane {
     /// When a status row exists, this summary is mirrored inline in that row;
     /// when no status row exists, it renders as its own footer row.
     unified_exec_footer: UnifiedExecFooter,
+    /// Live `update_plan` checklist shown while a turn is still running.
+    plan_checklist: PlanChecklist,
+    /// Live background-subagent activity shown while a parent turn is still running.
+    subagent_activity: SubagentActivity,
     /// Preview of pending steers and queued drafts shown above the composer.
     pending_input_preview: PendingInputPreview,
     /// Inactive threads with pending approval requests.
@@ -248,6 +259,8 @@ impl BottomPane {
             is_task_running: false,
             status: None,
             unified_exec_footer: UnifiedExecFooter::new(),
+            plan_checklist: PlanChecklist::new(),
+            subagent_activity: SubagentActivity::new(),
             pending_input_preview: PendingInputPreview::new(),
             pending_thread_approvals: PendingThreadApprovals::new(),
             esc_backtrack_hint: false,
@@ -914,6 +927,26 @@ impl BottomPane {
         }
     }
 
+    pub(crate) fn set_plan_checklist(&mut self, plan: Vec<PlanItemArg>) {
+        self.plan_checklist.set_plan(plan);
+        self.request_redraw();
+    }
+
+    pub(crate) fn clear_plan_checklist(&mut self) {
+        self.plan_checklist.clear();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_subagent_activity(&mut self, rows: Vec<SubagentActivityRow>) {
+        self.subagent_activity.set_rows(rows);
+        self.request_redraw();
+    }
+
+    pub(crate) fn clear_subagent_activity(&mut self) {
+        self.subagent_activity.clear();
+        self.request_redraw();
+    }
+
     /// Copy unified-exec summary text into the active status row, if any.
     ///
     /// This keeps status-line inline text synchronized without forcing the
@@ -1236,12 +1269,28 @@ impl BottomPane {
                     RenderableItem::Borrowed(&self.unified_exec_footer),
                 );
             }
+            let has_plan_checklist = !self.plan_checklist.is_empty();
+            if has_plan_checklist {
+                flex.push(
+                    /*flex*/ 0,
+                    RenderableItem::Borrowed(&self.plan_checklist),
+                );
+            }
+            let has_subagent_activity = !self.subagent_activity.is_empty();
+            if has_subagent_activity {
+                flex.push(
+                    /*flex*/ 0,
+                    RenderableItem::Borrowed(&self.subagent_activity),
+                );
+            }
             let has_pending_thread_approvals = !self.pending_thread_approvals.is_empty();
             let has_pending_input = !self.pending_input_preview.queued_messages.is_empty()
                 || !self.pending_input_preview.pending_steers.is_empty()
                 || !self.pending_input_preview.rejected_steers.is_empty();
-            let has_status_or_footer =
-                self.status.is_some() || !self.unified_exec_footer.is_empty();
+            let has_status_or_footer = self.status.is_some()
+                || !self.unified_exec_footer.is_empty()
+                || has_plan_checklist
+                || has_subagent_activity;
             let has_inline_previews = has_pending_thread_approvals || has_pending_input;
             if has_inline_previews && has_status_or_footer {
                 flex.push(/*flex*/ 0, RenderableItem::Owned("".into()));
@@ -1363,7 +1412,7 @@ mod tests {
             for x in 0..buf.area().width {
                 row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
             }
-            lines.push(row);
+            lines.push(row.trim_end().to_string());
         }
         lines.join("\n")
     }
@@ -1810,7 +1859,7 @@ mod tests {
 
         let area = Rect::new(0, 0, width, after);
         let rendered = render_snapshot(&pane, area);
-        assert!(rendered.contains("background terminal running · /ps to view"));
+        assert!(rendered.contains("bg terminal: sleep 5 · /ps · /stop"));
     }
 
     #[test]

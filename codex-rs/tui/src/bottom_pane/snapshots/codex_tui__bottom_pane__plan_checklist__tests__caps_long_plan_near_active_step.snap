@@ -1,0 +1,31 @@
+---
+source: tui/src/bottom_pane/plan_checklist.rs
+expression: "render(&checklist, 44)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 44, height: 6 },
+    content: [
+        "• Plan 3/6 complete                         ",
+        "  ✓ Step 3                                  ",
+        "  › Step 4                                  ",
+        "  - Step 5                                  ",
+        "  - Step 6                                  ",
+        "  +2 earlier steps                          ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 19, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 10, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 2, fg: Cyan, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 10, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 10, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 18, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

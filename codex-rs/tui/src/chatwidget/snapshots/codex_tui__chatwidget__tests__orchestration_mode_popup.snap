@@ -2,14 +2,16 @@
 source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: popup
 ---
-  Orchestration Mode
-  Choose how Codex should use subagents for future turns.
+  Agent Orchestration
+  Choose how Codex should split exploration and implementation.
 
-  1. Full               Use explorer and worker agents for separable complex
+  1. Agentic coding     Full orchestration plus preferred exploration
+                        subagents.
+  2. Full               Use explorer and worker agents for separable coding
                         work.
-  2. Explore            Prefer explorer agents for broad discovery.
-  3. Work               Prefer worker agents for disjoint implementation
+  3. Explore            Prefer explorer agents for broad repository discovery.
+  4. Work               Prefer worker agents for disjoint implementation
                         scopes.
-› 4. Disable (current)  Do not add orchestration guidance.
+› 5. Disable (current)  Do not add orchestration guidance.
 
   Press enter to confirm or esc to go back

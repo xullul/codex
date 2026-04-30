@@ -2,8 +2,11 @@
 source: tui/src/chatwidget/tests/exec_flow.rs
 expression: normalize_snapshot_paths(rendered)
 ---
-• Waiting for background terminal (0s • esc to …
-  └ cargo test -p codex-core -- --exact…
+• Testing cargo test -p codex-tui
+
+• Testing (0s • esc to interrupt)
+  └ cargo test -p codex-tui
+    Also active: Read main.rs
 
 
 › Ask Codex to do anything

@@ -1533,3 +1533,33 @@ async fn plan_update_renders_history_cell() {
     assert!(blob.contains("Implement feature"));
     assert!(blob.contains("Write tests"));
 }
+
+#[tokio::test]
+async fn plan_update_updates_live_bottom_checklist_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    chat.handle_codex_event(Event {
+        id: "sub-1".into(),
+        msg: EventMsg::PlanUpdate(UpdatePlanArgs {
+            explanation: Some("Adapting plan".to_string()),
+            plan: vec![
+                PlanItemArg {
+                    step: "Explore Claude Code task surfaces".into(),
+                    status: StepStatus::Completed,
+                },
+                PlanItemArg {
+                    step: "Render live plan progress in the bottom pane".into(),
+                    status: StepStatus::InProgress,
+                },
+                PlanItemArg {
+                    step: "Update focused TUI snapshots".into(),
+                    status: StepStatus::Pending,
+                },
+            ],
+        }),
+    });
+
+    let popup = render_bottom_popup(&chat, /*width*/ 72);
+    assert_chatwidget_snapshot!("plan_update_live_bottom_checklist", popup);
+}

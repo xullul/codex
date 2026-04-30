@@ -81,8 +81,8 @@ pub(crate) struct FooterProps {
     /// Active thread label shown when the footer is rendering contextual information instead of an
     /// instructional hint.
     ///
-    /// When both this label and the configured status line are available, they are rendered on the
-    /// same row separated by ` · `.
+    /// When both this label and the configured status line are available, the agent label is
+    /// rendered first so it survives narrow-width truncation.
     pub(crate) active_agent_label: Option<String>,
 }
 
@@ -111,6 +111,14 @@ impl CollaborationModeIndicator {
                 format!("Pair Programming mode{suffix}")
             }
             CollaborationModeIndicator::Execute => format!("Execute mode{suffix}"),
+        }
+    }
+
+    fn compact_label(self) -> &'static str {
+        match self {
+            CollaborationModeIndicator::Plan => "Plan",
+            CollaborationModeIndicator::PairProgramming => "Pair",
+            CollaborationModeIndicator::Execute => "Exec",
         }
     }
 
@@ -483,6 +491,19 @@ pub(crate) fn mode_indicator_line(
     indicator.map(|indicator| Line::from(vec![indicator.styled_span(show_cycle_hint)]))
 }
 
+pub(crate) fn compact_mode_indicator_line(
+    indicator: Option<CollaborationModeIndicator>,
+) -> Option<Line<'static>> {
+    indicator.map(|indicator| {
+        let span = match indicator {
+            CollaborationModeIndicator::Plan => indicator.compact_label().magenta(),
+            CollaborationModeIndicator::PairProgramming => indicator.compact_label().cyan(),
+            CollaborationModeIndicator::Execute => indicator.compact_label().dim(),
+        };
+        Line::from(vec![span])
+    })
+}
+
 pub(crate) fn side_conversation_context_line(label: &str) -> Line<'static> {
     if let Some(rest) = label.strip_prefix("Side ") {
         Line::from(vec!["Side".magenta().bold(), format!(" {rest}").magenta()])
@@ -597,8 +618,9 @@ fn footer_from_props_lines(
     show_shortcuts_hint: bool,
     show_queue_hint: bool,
 ) -> Vec<Line<'static>> {
-    // Passive footer context can come from the configurable status line, the
-    // active agent label, or both combined.
+    // Passive footer context can come from the active agent label, the
+    // configurable status line, or both combined. Keep the agent label first
+    // so multi-agent context survives narrow-width truncation.
     if let Some(status_line) = passive_footer_status_line(props) {
         return vec![status_line.dim()];
     }
@@ -646,7 +668,7 @@ fn footer_from_props_lines(
 
 /// Returns the contextual footer row when the footer is not busy showing an instructional hint.
 ///
-/// The returned line may contain the configured status line, the currently viewed agent label, or
+/// The returned line may contain the currently viewed agent label, the configured status line, or
 /// both combined. Active instructional states such as quit reminders, shortcut overlays, and queue
 /// prompts deliberately return `None` so those call-to-action hints stay visible.
 pub(crate) fn passive_footer_status_line(props: &FooterProps) -> Option<Line<'static>> {
@@ -654,18 +676,19 @@ pub(crate) fn passive_footer_status_line(props: &FooterProps) -> Option<Line<'st
         return None;
     }
 
-    let mut line = if props.status_line_enabled {
-        props.status_line_value.clone()
-    } else {
-        None
-    };
+    let mut line = props
+        .active_agent_label
+        .as_ref()
+        .map(|active_agent_label| Line::from(active_agent_label.clone()));
 
-    if let Some(active_agent_label) = props.active_agent_label.as_ref() {
+    if props.status_line_enabled
+        && let Some(status_line) = props.status_line_value.clone()
+    {
         if let Some(existing) = line.as_mut() {
             existing.spans.push(" · ".into());
-            existing.spans.push(active_agent_label.clone().into());
+            existing.spans.extend(status_line.spans);
         } else {
-            line = Some(Line::from(active_agent_label.clone()));
+            line = Some(status_line);
         }
     }
 
@@ -1193,10 +1216,7 @@ mod tests {
                 };
                 let right_line = if status_line_active {
                     let full = mode_indicator_line(collaboration_mode_indicator, show_cycle_hint);
-                    let compact = mode_indicator_line(
-                        collaboration_mode_indicator,
-                        /*show_cycle_hint*/ false,
-                    );
+                    let compact = compact_mode_indicator_line(collaboration_mode_indicator);
                     let full_width = full.as_ref().map(|line| line.width() as u16).unwrap_or(0);
                     if can_show_left_with_context(area, left_width, full_width) {
                         full
@@ -1755,7 +1775,7 @@ mod tests {
         );
         let collapsed = screen.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            collapsed.contains("Plan mode"),
+            collapsed.contains("Plan"),
             "mode indicator should remain visible"
         );
         assert!(

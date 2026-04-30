@@ -1253,6 +1253,9 @@ impl App {
             AppEvent::UpdateOrchestrationMode { orchestration_mode } => {
                 self.update_orchestration_mode(orchestration_mode).await;
             }
+            AppEvent::EnableAgenticCodingPreset => {
+                self.enable_agentic_coding_preset().await;
+            }
             AppEvent::ResetMemories => {
                 self.reset_memories_with_app_server(app_server).await;
             }

@@ -1481,6 +1481,50 @@ mod tests {
     }
 
     #[test]
+    fn powershell_increment_first_streaming_line_range_is_read() {
+        let script = "$i=0; Get-Content -LiteralPath src\\Services\\EventLinkWorkflows.cs | ForEach-Object { $i++; if($i -ge 420 -and $i -le 540){ '{0,4}: {1}' -f $i, $_ } }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"src\\\\Services\\\\EventLinkWorkflows.cs\"".to_string(),
+                name: "EventLinkWorkflows.cs".to_string(),
+                path: PathBuf::from("src\\Services\\EventLinkWorkflows.cs"),
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_location_wrapped_increment_first_streaming_line_range_is_read() {
+        let script = "Set-Location -LiteralPath C:\\Users\\Keenu\\KeenuProjects\\mantra; $i=0; Get-Content src\\engine\\duel.ts | ForEach-Object { $i++; if($i -ge 3578 -and $i -le 3608){ '{0,5}: {1}' -f $i, $_ } }";
+        let expected_path =
+            PathBuf::from("C:\\Users\\Keenu\\KeenuProjects\\mantra").join("src\\engine\\duel.ts");
+        assert_parsed(
+            &vec_str(&["powershell.exe", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: shlex_join(&[
+                    "Get-Content".to_string(),
+                    expected_path.to_string_lossy().to_string(),
+                ]),
+                name: "duel.ts".to_string(),
+                path: expected_path,
+            }],
+        );
+    }
+
+    #[test]
+    fn powershell_increment_first_streaming_line_range_handles_parenthesized_reversed_guard() {
+        let script = "$i=0; Get-Content src\\engine\\duel.ts | ForEach-Object { $i++; if(($i -le 3608) -and ($i -ge 3578)){ '{0,5}: {1}' -f $i, $_ } }";
+        assert_parsed(
+            &vec_str(&["pwsh", "-NoProfile", "-Command", script]),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content \"src\\\\engine\\\\duel.ts\"".to_string(),
+                name: "duel.ts".to_string(),
+                path: PathBuf::from("src\\engine\\duel.ts"),
+            }],
+        );
+    }
+
+    #[test]
     fn powershell_push_location_line_range_is_read() {
         let script = "Push-Location 'C:\\Users\\Keenu\\KeenuProjects\\mantra'; $lines=Get-Content -LiteralPath 'src\\engine\\duel.ts'; for($i=930; $i -le 1025; $i++) { '{0}:{1}' -f $i,$lines[$i-1] }; Pop-Location";
         let expected_path =
