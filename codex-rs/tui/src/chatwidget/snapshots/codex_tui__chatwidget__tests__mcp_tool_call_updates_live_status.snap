@@ -1,0 +1,14 @@
+---
+source: tui/src/chatwidget/tests/mcp_startup.rs
+expression: normalized_backend_snapshot(terminal.backend())
+---
+"                                                                                          "
+"• Using github.search({"query":"status row"})                                             "
+"                                                                                          "
+"• Using github.search (0s • esc to interrupt)                                             "
+"  └ {"query":"status row"}                                                                "
+"                                                                                          "
+"                                                                                          "
+"› Ask Codex to do anything                                                                "
+"                                                                                          "
+"  gpt-5.5 default · /tmp/project                                                          "

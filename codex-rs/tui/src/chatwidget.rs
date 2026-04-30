@@ -190,6 +190,7 @@ use codex_protocol::protocol::GuardianAssessmentStatus;
 use codex_protocol::protocol::ImageGenerationBeginEvent;
 use codex_protocol::protocol::ImageGenerationEndEvent;
 use codex_protocol::protocol::ListSkillsResponseEvent;
+use codex_protocol::protocol::McpInvocation;
 #[cfg(test)]
 use codex_protocol::protocol::McpListToolsResponseEvent;
 #[cfg(test)]
@@ -363,6 +364,9 @@ use crate::key_hint;
 use crate::key_hint::KeyBinding;
 #[cfg(test)]
 use crate::markdown::append_markdown;
+use crate::mcp_tool_status::McpToolStatusSummary;
+use crate::mcp_tool_status::combine_mcp_tool_status_summaries;
+use crate::mcp_tool_status::mcp_tool_status_summary;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::FlexRenderable;
@@ -704,6 +708,18 @@ impl StatusIndicatorState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct RunningMcpToolCall {
+    invocation: McpInvocation,
+    started_order: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct RunningMcpToolActivity {
+    calls: HashMap<String, RunningMcpToolCall>,
+    sequence: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct PendingGuardianReviewStatus {
     entries: Vec<PendingGuardianReviewStatusEntry>,
@@ -855,6 +871,7 @@ pub(crate) struct ChatWidget {
     saw_copy_source_this_turn: bool,
     running_commands: HashMap<String, RunningCommand>,
     running_command_sequence: u64,
+    running_mcp_tool_activity: Box<RunningMcpToolActivity>,
     collab_agent_metadata: HashMap<ThreadId, CollabAgentMetadata>,
     pending_collab_spawn_requests: HashMap<String, multi_agents::SpawnRequestSummary>,
     suppressed_exec_calls: HashSet<String>,
@@ -2008,6 +2025,52 @@ impl ChatWidget {
         true
     }
 
+    fn running_mcp_tool_status(&self) -> Option<McpToolStatusSummary> {
+        let mut running: Vec<_> = self.running_mcp_tool_activity.calls.values().collect();
+        running.sort_by_key(|running| Reverse(running.started_order));
+        combine_mcp_tool_status_summaries(
+            running
+                .into_iter()
+                .map(|running| mcp_tool_status_summary(&running.invocation))
+                .collect(),
+        )
+    }
+
+    fn set_mcp_tool_status(&mut self, summary: McpToolStatusSummary) {
+        self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
+        let details_max_lines = summary
+            .details
+            .as_deref()
+            .map(|details| {
+                details
+                    .lines()
+                    .count()
+                    .clamp(1, STATUS_DETAILS_DEFAULT_MAX_LINES)
+            })
+            .unwrap_or(1);
+        self.set_status(
+            summary.header,
+            summary.details,
+            StatusDetailsCapitalization::Preserve,
+            details_max_lines,
+        );
+    }
+
+    fn refresh_running_mcp_tool_status(&mut self) -> bool {
+        let Some(summary) = self.running_mcp_tool_status() else {
+            return false;
+        };
+        self.set_mcp_tool_status(summary);
+        true
+    }
+
+    fn restore_status_after_tool_activity(&mut self) {
+        if self.refresh_running_mcp_tool_status() || self.refresh_running_exec_status() {
+            return;
+        }
+        self.restore_reasoning_status_header();
+    }
+
     /// Sets the currently rendered footer status-line value.
     pub(crate) fn set_status_line(&mut self, status_line: Option<Line<'static>>) {
         self.bottom_pane.set_status_line(status_line);
@@ -2693,6 +2756,7 @@ impl ChatWidget {
             .set_turn_running(/*turn_running*/ false);
         self.update_task_running_state();
         self.running_commands.clear();
+        self.running_mcp_tool_activity.calls.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
         self.unified_exec_wait_streak = None;
@@ -3267,6 +3331,7 @@ impl ChatWidget {
             .set_turn_running(/*turn_running*/ false);
         self.update_task_running_state();
         self.running_commands.clear();
+        self.running_mcp_tool_activity.calls.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
         self.unified_exec_wait_streak = None;
@@ -5114,8 +5179,8 @@ impl ChatWidget {
         }
         // Mark that actual work was done (command executed)
         self.had_work_activity = true;
-        if self.bottom_pane.is_task_running() && !self.refresh_running_exec_status() {
-            self.restore_reasoning_status_header();
+        if self.bottom_pane.is_task_running() {
+            self.restore_status_after_tool_activity();
         }
         if is_user_shell {
             self.maybe_send_next_queued_input();
@@ -5318,6 +5383,17 @@ impl ChatWidget {
 
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
         self.flush_answer_stream_with_separator();
+        self.bottom_pane.ensure_status_indicator();
+        let running_mcp_tool_activity = self.running_mcp_tool_activity.as_mut();
+        running_mcp_tool_activity.sequence = running_mcp_tool_activity.sequence.saturating_add(1);
+        running_mcp_tool_activity.calls.insert(
+            ev.call_id.clone(),
+            RunningMcpToolCall {
+                invocation: ev.invocation.clone(),
+                started_order: running_mcp_tool_activity.sequence,
+            },
+        );
+        self.refresh_running_mcp_tool_status();
         self.flush_active_cell();
         self.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
             ev.call_id,
@@ -5337,6 +5413,7 @@ impl ChatWidget {
             result,
             ..
         } = ev;
+        self.running_mcp_tool_activity.calls.remove(&call_id);
 
         let extra_cell = match self
             .active_cell
@@ -5363,6 +5440,9 @@ impl ChatWidget {
         }
         // Mark that actual work was done (MCP tool call)
         self.had_work_activity = true;
+        if self.bottom_pane.is_task_running() {
+            self.restore_status_after_tool_activity();
+        }
     }
 
     pub(crate) fn new_with_app_event(common: ChatWidgetInit) -> Self {
@@ -5466,6 +5546,7 @@ impl ChatWidget {
             clipboard_lease: None,
             running_commands: HashMap::new(),
             running_command_sequence: 0,
+            running_mcp_tool_activity: Box::default(),
             collab_agent_metadata: HashMap::new(),
             pending_collab_spawn_requests: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),

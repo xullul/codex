@@ -222,6 +222,7 @@ pub(super) async fn make_chatwidget_manual(
         saw_copy_source_this_turn: false,
         running_commands: HashMap::new(),
         running_command_sequence: 0,
+        running_mcp_tool_activity: Box::default(),
         collab_agent_metadata: HashMap::new(),
         pending_collab_spawn_requests: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),

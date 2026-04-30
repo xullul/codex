@@ -2,6 +2,105 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn mcp_tool_call_updates_live_status_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.show_welcome_banner = false;
+
+    chat.handle_codex_event(Event {
+        id: "turn-1".into(),
+        msg: EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "mcp-call-1".into(),
+        msg: EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            call_id: "mcp-call-1".to_string(),
+            invocation: McpInvocation {
+                server: "github".to_string(),
+                tool: "search".to_string(),
+                arguments: Some(json!({"query":"status row"})),
+            },
+            mcp_app_resource_uri: None,
+        }),
+    });
+
+    let height = chat.desired_height(/*width*/ 90);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, height))
+        .expect("create terminal");
+    terminal
+        .draw(|f| chat.render(f.area(), f.buffer_mut()))
+        .expect("draw chat widget");
+    assert_chatwidget_snapshot!(
+        "mcp_tool_call_updates_live_status",
+        normalized_backend_snapshot(terminal.backend())
+    );
+}
+
+#[tokio::test]
+async fn mcp_tool_call_end_restores_working_status() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_codex_event(Event {
+        id: "turn-1".into(),
+        msg: EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }),
+    });
+    let invocation = McpInvocation {
+        server: "github".to_string(),
+        tool: "search".to_string(),
+        arguments: Some(json!({"query":"status row"})),
+    };
+    chat.handle_codex_event(Event {
+        id: "mcp-call-1".into(),
+        msg: EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            call_id: "mcp-call-1".to_string(),
+            invocation: invocation.clone(),
+            mcp_app_resource_uri: None,
+        }),
+    });
+
+    assert_eq!(
+        chat.bottom_pane
+            .status_widget()
+            .expect("status should be visible")
+            .header(),
+        "Using github.search"
+    );
+
+    chat.handle_codex_event(Event {
+        id: "mcp-call-1".into(),
+        msg: EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+            call_id: "mcp-call-1".to_string(),
+            invocation,
+            mcp_app_resource_uri: None,
+            duration: std::time::Duration::from_millis(12),
+            result: Ok(codex_protocol::mcp::CallToolResult {
+                content: Vec::new(),
+                is_error: None,
+                structured_content: None,
+                meta: None,
+            }),
+        }),
+    });
+
+    assert_eq!(
+        chat.bottom_pane
+            .status_widget()
+            .expect("status should stay visible while turn is running")
+            .header(),
+        "Working"
+    );
+}
+
+#[tokio::test]
 async fn mcp_startup_header_booting_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.show_welcome_banner = false;
