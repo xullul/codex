@@ -2,6 +2,7 @@ use crate::can_request_original_image_detail;
 use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::Feature;
 use codex_features::Features;
+use codex_features::OrchestrationModeConfigToml;
 use codex_protocol::config_types::WebSearchConfig;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -45,6 +46,61 @@ pub enum ExplorationSubagentsPolicy {
     Auto,
     Less,
     Disable,
+}
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum OrchestrationMode {
+    Full,
+    Explore,
+    Work,
+    #[default]
+    Disable,
+}
+
+impl From<OrchestrationModeConfigToml> for OrchestrationMode {
+    fn from(value: OrchestrationModeConfigToml) -> Self {
+        match value {
+            OrchestrationModeConfigToml::Full => Self::Full,
+            OrchestrationModeConfigToml::Explore => Self::Explore,
+            OrchestrationModeConfigToml::Work => Self::Work,
+            OrchestrationModeConfigToml::Disable => Self::Disable,
+        }
+    }
+}
+
+impl OrchestrationMode {
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Explore => "explore",
+            Self::Work => "work",
+            Self::Disable => "disable",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::Explore => "Explore",
+            Self::Work => "Work",
+            Self::Disable => "Disable",
+        }
+    }
+
+    pub fn usage_guidance(self) -> Option<&'static str> {
+        match self {
+            Self::Full => Some(
+                "### Orchestration mode\n- Act as an orchestrator for complex, multi-file tasks: make a brief plan, keep immediate blocking work local, and delegate separable exploration or implementation to explorer and worker agents.\n- Use explorer agents for broad discovery and worker agents for disjoint implementation scopes when the work can run in parallel.\n- Integrate subagent results before finalizing.",
+            ),
+            Self::Explore => Some(
+                "### Orchestration mode\n- Prefer explorer agents for broad repository, library, pattern, or blocker discovery that can run beside local work.\n- Keep narrow or immediately blocking investigation local.\n- Ask explorers for concise findings, relevant paths, and risks.",
+            ),
+            Self::Work => Some(
+                "### Orchestration mode\n- Prefer worker agents for implementation tasks that can be split into disjoint files, modules, or responsibilities.\n- Give each worker explicit ownership and tell it to preserve other agents' edits.\n- Keep tightly coupled or blocking changes local.",
+            ),
+            Self::Disable => None,
+        }
+    }
 }
 
 impl From<ExplorationSubagentsConfigToml> for ExplorationSubagentsPolicy {
@@ -161,6 +217,7 @@ pub struct ToolsConfig {
     pub collab_tools: bool,
     pub multi_agent_v2: bool,
     pub exploration_subagents_policy: ExplorationSubagentsPolicy,
+    pub orchestration_mode: OrchestrationMode,
     pub hide_spawn_agent_metadata: bool,
     pub spawn_agent_usage_hint: bool,
     pub spawn_agent_usage_hint_text: Option<String>,
@@ -279,6 +336,7 @@ impl ToolsConfig {
             collab_tools: include_collab_tools,
             multi_agent_v2: include_multi_agent_v2,
             exploration_subagents_policy: ExplorationSubagentsPolicy::default(),
+            orchestration_mode: OrchestrationMode::default(),
             hide_spawn_agent_metadata: false,
             spawn_agent_usage_hint: true,
             spawn_agent_usage_hint_text: None,
@@ -319,6 +377,11 @@ impl ToolsConfig {
         exploration_subagents_policy: ExplorationSubagentsPolicy,
     ) -> Self {
         self.exploration_subagents_policy = exploration_subagents_policy;
+        self
+    }
+
+    pub fn with_orchestration_mode(mut self, orchestration_mode: OrchestrationMode) -> Self {
+        self.orchestration_mode = orchestration_mode;
         self
     }
 

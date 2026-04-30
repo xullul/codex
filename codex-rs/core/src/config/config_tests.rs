@@ -68,6 +68,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::ExplorationSubagentsPolicy;
+use codex_tools::OrchestrationMode;
 use serde::Deserialize;
 use tempfile::tempdir;
 
@@ -7082,6 +7083,7 @@ usage_hint_enabled = false
 usage_hint_text = "Custom delegation guidance."
 hide_spawn_agent_metadata = true
 exploration_subagents = "less"
+orchestration_mode = "work"
 "#,
     )?;
 
@@ -7102,12 +7104,16 @@ exploration_subagents = "less"
         config.multi_agent_v2.exploration_subagents_policy,
         ExplorationSubagentsPolicy::Less
     );
+    assert_eq!(
+        config.multi_agent_v2.orchestration_mode,
+        OrchestrationMode::Work
+    );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn multi_agent_v2_config_defaults_exploration_subagents_to_auto() -> std::io::Result<()> {
+async fn multi_agent_v2_config_uses_default_modes() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     std::fs::write(
         codex_home.path().join(CONFIG_TOML_FILE),
@@ -7126,6 +7132,10 @@ enabled = true
         config.multi_agent_v2.exploration_subagents_policy,
         ExplorationSubagentsPolicy::Auto
     );
+    assert_eq!(
+        config.multi_agent_v2.orchestration_mode,
+        OrchestrationMode::Disable
+    );
 
     Ok(())
 }
@@ -7142,12 +7152,14 @@ usage_hint_enabled = true
 usage_hint_text = "base hint"
 hide_spawn_agent_metadata = true
 exploration_subagents = "prefer"
+orchestration_mode = "full"
 
 [profiles.no_hint.features.multi_agent_v2]
 usage_hint_enabled = false
 usage_hint_text = "profile hint"
 hide_spawn_agent_metadata = false
 exploration_subagents = "disable"
+orchestration_mode = "explore"
 "#,
     )?;
 
@@ -7166,6 +7178,10 @@ exploration_subagents = "disable"
     assert_eq!(
         config.multi_agent_v2.exploration_subagents_policy,
         ExplorationSubagentsPolicy::Disable
+    );
+    assert_eq!(
+        config.multi_agent_v2.orchestration_mode,
+        OrchestrationMode::Explore
     );
 
     Ok(())

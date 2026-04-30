@@ -2138,6 +2138,7 @@ fn spawn_agent_tool_options(config: &ToolsConfig) -> SpawnAgentToolOptions<'_> {
         include_usage_hint: config.spawn_agent_usage_hint,
         usage_hint_text: config.spawn_agent_usage_hint_text.clone(),
         exploration_subagents_policy: config.exploration_subagents_policy,
+        orchestration_mode: config.orchestration_mode,
         max_concurrent_threads_per_session: config.max_concurrent_threads_per_session,
     }
 }

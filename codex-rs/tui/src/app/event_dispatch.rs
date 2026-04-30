@@ -1250,6 +1250,9 @@ impl App {
             } => {
                 self.update_subagent_config(exploration_subagents).await;
             }
+            AppEvent::UpdateOrchestrationMode { orchestration_mode } => {
+                self.update_orchestration_mode(orchestration_mode).await;
+            }
             AppEvent::ResetMemories => {
                 self.reset_memories_with_app_server(app_server).await;
             }

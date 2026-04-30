@@ -2577,6 +2577,16 @@ impl Session {
         {
             developer_sections.push(collab_instructions.render());
         }
+        let subagent_tools_available =
+            turn_context.tools_config.multi_agent_v2 || turn_context.tools_config.collab_tools;
+        if subagent_tools_available
+            && let Some(orchestration_guidance) = turn_context
+                .tools_config
+                .orchestration_mode
+                .usage_guidance()
+        {
+            developer_sections.push(orchestration_guidance.to_string());
+        }
         if let Some(realtime_update) = crate::context_manager::updates::build_initial_realtime_item(
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),

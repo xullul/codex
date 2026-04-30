@@ -1337,6 +1337,9 @@
         "hide_spawn_agent_metadata": {
           "type": "boolean"
         },
+        "orchestration_mode": {
+          "$ref": "#/definitions/OrchestrationModeConfigToml"
+        },
         "usage_hint_enabled": {
           "type": "boolean"
         },
@@ -1531,6 +1534,15 @@
           "type": "string"
         }
       ]
+    },
+    "OrchestrationModeConfigToml": {
+      "enum": [
+        "full",
+        "explore",
+        "work",
+        "disable"
+      ],
+      "type": "string"
     },
     "OtelConfigToml": {
       "additionalProperties": false,

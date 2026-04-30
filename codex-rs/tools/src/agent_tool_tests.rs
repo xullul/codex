@@ -1,6 +1,7 @@
 use super::*;
 use crate::JsonSchemaPrimitiveType;
 use crate::JsonSchemaType;
+use crate::OrchestrationMode;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningEffortPreset;
@@ -41,6 +42,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         include_usage_hint: true,
         usage_hint_text: None,
         exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+        orchestration_mode: OrchestrationMode::Disable,
         max_concurrent_threads_per_session: Some(4),
     });
 
@@ -108,6 +110,7 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
         include_usage_hint: true,
         usage_hint_text: None,
         exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+        orchestration_mode: OrchestrationMode::Disable,
         max_concurrent_threads_per_session: None,
     });
 
@@ -160,6 +163,7 @@ fn spawn_agent_tool_v1_renders_exploration_policy_guidance() {
             include_usage_hint: true,
             usage_hint_text: None,
             exploration_subagents_policy: policy,
+            orchestration_mode: OrchestrationMode::Disable,
             max_concurrent_threads_per_session: None,
         });
 
@@ -168,6 +172,59 @@ fn spawn_agent_tool_v1_renders_exploration_policy_guidance() {
         };
         assert!(description.contains(expected));
     }
+}
+
+#[test]
+fn spawn_agent_tool_v2_renders_orchestration_mode_guidance() {
+    for (mode, expected) in [
+        (
+            OrchestrationMode::Full,
+            "Act as an orchestrator for complex, multi-file tasks",
+        ),
+        (
+            OrchestrationMode::Explore,
+            "Prefer explorer agents for broad repository, library, pattern, or blocker discovery",
+        ),
+        (
+            OrchestrationMode::Work,
+            "Prefer worker agents for implementation tasks that can be split",
+        ),
+    ] {
+        let tool = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+            available_models: &[],
+            agent_type_description: String::new(),
+            hide_agent_type_model_reasoning: false,
+            include_usage_hint: true,
+            usage_hint_text: None,
+            exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+            orchestration_mode: mode,
+            max_concurrent_threads_per_session: None,
+        });
+
+        let ToolSpec::Function(ResponsesApiTool { description, .. }) = tool else {
+            panic!("spawn_agent should be a function tool");
+        };
+        assert!(description.contains(expected));
+    }
+}
+
+#[test]
+fn spawn_agent_tool_v2_omits_orchestration_guidance_when_disabled() {
+    let tool = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+        available_models: &[],
+        agent_type_description: String::new(),
+        hide_agent_type_model_reasoning: false,
+        include_usage_hint: true,
+        usage_hint_text: None,
+        exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+        orchestration_mode: OrchestrationMode::Disable,
+        max_concurrent_threads_per_session: None,
+    });
+
+    let ToolSpec::Function(ResponsesApiTool { description, .. }) = tool else {
+        panic!("spawn_agent should be a function tool");
+    };
+    assert!(!description.contains("### Orchestration mode"));
 }
 
 #[test]

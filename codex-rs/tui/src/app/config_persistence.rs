@@ -522,6 +522,92 @@ impl App {
         );
     }
 
+    pub(super) async fn update_orchestration_mode(
+        &mut self,
+        orchestration_mode: OrchestrationModeConfigToml,
+    ) {
+        let active_profile = self.active_profile.clone();
+        let scoped_segments = |key: &str| {
+            if let Some(profile) = active_profile.as_deref() {
+                vec![
+                    "profiles".to_string(),
+                    profile.to_string(),
+                    "features".to_string(),
+                    "multi_agent_v2".to_string(),
+                    key.to_string(),
+                ]
+            } else {
+                vec![
+                    "features".to_string(),
+                    "multi_agent_v2".to_string(),
+                    key.to_string(),
+                ]
+            }
+        };
+        let enabled = self.config.features.enabled(Feature::MultiAgentV2);
+        let mut next_multi_agent_v2 = self.config.multi_agent_v2.clone();
+        next_multi_agent_v2.set_orchestration_mode_config_toml(orchestration_mode);
+        let auto_enable_exploration = orchestration_mode != OrchestrationModeConfigToml::Disable
+            && next_multi_agent_v2.exploration_subagents_config_toml()
+                == ExplorationSubagentsConfigToml::Disable;
+        if auto_enable_exploration {
+            next_multi_agent_v2
+                .set_exploration_subagents_config_toml(ExplorationSubagentsConfigToml::Auto);
+        }
+        let orchestration_value = next_multi_agent_v2.orchestration_mode_config_value();
+        let mut edits = vec![
+            ConfigEdit::SetPath {
+                segments: scoped_segments("enabled"),
+                value: enabled.into(),
+            },
+            ConfigEdit::SetPath {
+                segments: scoped_segments("orchestration_mode"),
+                value: orchestration_value.into(),
+            },
+        ];
+        if auto_enable_exploration {
+            edits.push(ConfigEdit::SetPath {
+                segments: scoped_segments("exploration_subagents"),
+                value: next_multi_agent_v2
+                    .exploration_subagents_config_value()
+                    .into(),
+            });
+        }
+
+        if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits(edits)
+            .apply()
+            .await
+        {
+            tracing::error!(error = %err, "failed to persist orchestration mode");
+            self.chat_widget
+                .add_error_message(format!("Failed to save orchestration mode: {err}"));
+            return;
+        }
+
+        self.config.multi_agent_v2 = next_multi_agent_v2;
+        self.chat_widget.set_orchestration_mode(orchestration_mode);
+        if auto_enable_exploration {
+            self.chat_widget
+                .set_subagent_config(ExplorationSubagentsConfigToml::Auto);
+        }
+        self.chat_widget.submit_op(AppCommand::reload_user_config());
+        self.chat_widget.add_info_message(
+            format!(
+                "Orchestration mode updated to {}.",
+                self.config.multi_agent_v2.orchestration_mode_label()
+            ),
+            /*hint*/ None,
+        );
+        if auto_enable_exploration {
+            self.chat_widget.add_info_message(
+                "Subagent exploration preference was set to Auto because orchestration mode uses subagents."
+                    .to_string(),
+                /*hint*/ None,
+            );
+        }
+    }
+
     pub(super) async fn reset_memories_with_app_server(
         &mut self,
         app_server: &mut AppServerSession,

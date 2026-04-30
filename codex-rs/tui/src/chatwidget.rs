@@ -116,6 +116,7 @@ use codex_core_skills::model::SkillMetadata;
 use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::FEATURES;
 use codex_features::Feature;
+use codex_features::OrchestrationModeConfigToml;
 #[cfg(test)]
 use codex_git_utils::CommitLogEntry;
 use codex_git_utils::current_branch_name;
@@ -2859,6 +2860,58 @@ impl ChatWidget {
         });
     }
 
+    pub(crate) fn open_orchestration_mode_popup(&mut self) {
+        let current = self.config.multi_agent_v2.orchestration_mode_config_toml();
+        let options = [
+            (
+                OrchestrationModeConfigToml::Full,
+                "Full",
+                "Use explorer and worker agents for separable complex work.",
+            ),
+            (
+                OrchestrationModeConfigToml::Explore,
+                "Explore",
+                "Prefer explorer agents for broad discovery.",
+            ),
+            (
+                OrchestrationModeConfigToml::Work,
+                "Work",
+                "Prefer worker agents for disjoint implementation scopes.",
+            ),
+            (
+                OrchestrationModeConfigToml::Disable,
+                "Disable",
+                "Do not add orchestration guidance.",
+            ),
+        ];
+        let initial_selected_idx = options.iter().position(|(mode, _, _)| *mode == current);
+        let items = options
+            .into_iter()
+            .map(|(orchestration_mode, name, description)| {
+                let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                    tx.send(AppEvent::UpdateOrchestrationMode { orchestration_mode });
+                })];
+                SelectionItem {
+                    name: name.to_string(),
+                    description: Some(description.to_string()),
+                    is_current: orchestration_mode == current,
+                    actions,
+                    dismiss_on_select: true,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Orchestration Mode".to_string()),
+            subtitle: Some("Choose how Codex should use subagents for future turns.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            initial_selected_idx,
+            ..Default::default()
+        });
+    }
+
     pub(crate) fn open_memories_popup(&mut self) {
         if !self.config.features.enabled(Feature::MemoryTool) {
             self.open_memories_enable_prompt();
@@ -2921,6 +2974,15 @@ impl ChatWidget {
         self.config
             .multi_agent_v2
             .set_exploration_subagents_config_toml(exploration_subagents);
+    }
+
+    pub(crate) fn set_orchestration_mode(
+        &mut self,
+        orchestration_mode: OrchestrationModeConfigToml,
+    ) {
+        self.config
+            .multi_agent_v2
+            .set_orchestration_mode_config_toml(orchestration_mode);
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {

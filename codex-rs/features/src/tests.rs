@@ -395,6 +395,7 @@ usage_hint_enabled = false
 usage_hint_text = "Custom delegation guidance."
 hide_spawn_agent_metadata = true
 exploration_subagents = "prefer"
+orchestration_mode = "full"
 "#,
     )
     .expect("features table should deserialize");
@@ -408,6 +409,7 @@ exploration_subagents = "prefer"
         Some(crate::FeatureToml::Config(crate::MultiAgentV2ConfigToml {
             enabled: Some(true),
             exploration_subagents: Some(crate::ExplorationSubagentsConfigToml::Prefer),
+            orchestration_mode: Some(crate::OrchestrationModeConfigToml::Full),
             usage_hint_enabled: Some(false),
             usage_hint_text: Some("Custom delegation guidance.".to_string()),
             hide_spawn_agent_metadata: Some(true),
@@ -440,6 +442,7 @@ usage_hint_enabled = false
         Some(crate::FeatureToml::Config(crate::MultiAgentV2ConfigToml {
             enabled: None,
             exploration_subagents: None,
+            orchestration_mode: None,
             usage_hint_enabled: Some(false),
             usage_hint_text: None,
             hide_spawn_agent_metadata: None,
@@ -468,6 +471,40 @@ exploration_subagents = "{value}"
         };
         assert_eq!(config.exploration_subagents, Some(expected));
     }
+}
+
+#[test]
+fn multi_agent_v2_feature_config_deserializes_orchestration_mode_values() {
+    for (value, expected) in [
+        ("full", crate::OrchestrationModeConfigToml::Full),
+        ("explore", crate::OrchestrationModeConfigToml::Explore),
+        ("work", crate::OrchestrationModeConfigToml::Work),
+        ("disable", crate::OrchestrationModeConfigToml::Disable),
+    ] {
+        let features: FeaturesToml = toml::from_str(&format!(
+            r#"
+[multi_agent_v2]
+orchestration_mode = "{value}"
+"#
+        ))
+        .expect("features table should deserialize");
+
+        let Some(crate::FeatureToml::Config(config)) = features.multi_agent_v2 else {
+            panic!("multi_agent_v2 should deserialize as config");
+        };
+        assert_eq!(config.orchestration_mode, Some(expected));
+    }
+}
+
+#[test]
+fn multi_agent_v2_feature_config_rejects_invalid_orchestration_mode_value() {
+    toml::from_str::<FeaturesToml>(
+        r#"
+[multi_agent_v2]
+orchestration_mode = "always"
+"#,
+    )
+    .expect_err("invalid orchestration_mode value should fail");
 }
 
 #[test]

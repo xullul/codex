@@ -1,6 +1,7 @@
 use super::*;
 use codex_app_server_protocol::AppInfo;
 use codex_features::ExplorationSubagentsConfigToml;
+use codex_features::OrchestrationModeConfigToml;
 use codex_features::Stage;
 use pretty_assertions::assert_eq;
 
@@ -1823,6 +1824,34 @@ async fn subagent_config_popup_sends_selected_policy() {
         rx.try_recv(),
         Ok(AppEvent::UpdateSubagentConfig {
             exploration_subagents: ExplorationSubagentsConfigToml::Prefer
+        })
+    );
+}
+
+#[tokio::test]
+async fn orchestration_mode_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.open_orchestration_mode_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("orchestration_mode_popup", popup);
+}
+
+#[tokio::test]
+async fn orchestration_mode_popup_sends_selected_mode() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.open_orchestration_mode_popup();
+    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::UpdateOrchestrationMode {
+            orchestration_mode: OrchestrationModeConfigToml::Full
         })
     );
 }

@@ -111,6 +111,7 @@ use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_tools::ExplorationSubagentsPolicy;
+use codex_tools::OrchestrationMode;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -2227,6 +2228,53 @@ async fn thread_rollback_fails_when_num_turns_is_zero() {
 
     let history = sess.clone_history().await;
     assert_eq!(initial_context, history.raw_items());
+}
+
+#[tokio::test]
+async fn build_initial_context_injects_orchestration_guidance_when_enabled() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.tools_config.collab_tools = true;
+    turn_context.tools_config.multi_agent_v2 = true;
+    turn_context.tools_config.orchestration_mode = OrchestrationMode::Explore;
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts.iter().any(|text| text.contains(
+            "Prefer explorer agents for broad repository, library, pattern, or blocker discovery"
+        )),
+        "expected orchestration guidance, got {developer_texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn build_initial_context_omits_orchestration_guidance_when_disabled_or_unavailable() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.tools_config.collab_tools = true;
+    turn_context.tools_config.multi_agent_v2 = true;
+    turn_context.tools_config.orchestration_mode = OrchestrationMode::Disable;
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("### Orchestration mode")),
+        "did not expect disabled orchestration guidance, got {developer_texts:?}"
+    );
+
+    turn_context.tools_config.orchestration_mode = OrchestrationMode::Full;
+    turn_context.tools_config.collab_tools = false;
+    turn_context.tools_config.multi_agent_v2 = false;
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    assert!(
+        !developer_texts
+            .iter()
+            .any(|text| text.contains("### Orchestration mode")),
+        "did not expect unavailable orchestration guidance, got {developer_texts:?}"
+    );
 }
 
 #[tokio::test]

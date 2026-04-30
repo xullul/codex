@@ -35,6 +35,7 @@ pub enum SlashCommand {
     Agent,
     #[strum(to_string = "subagent-config", serialize = "subagents-config")]
     SubagentConfig,
+    OrchestrationMode,
     Side,
     // Undo,
     Copy,
@@ -109,6 +110,7 @@ impl SlashCommand {
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::SubagentConfig => "configure subagent delegation preferences",
+            SlashCommand::OrchestrationMode => "configure agent orchestration preferences",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
@@ -197,6 +199,7 @@ impl SlashCommand {
             | SlashCommand::Exit
             | SlashCommand::Side => true,
             SlashCommand::SubagentConfig => true,
+            SlashCommand::OrchestrationMode => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,
@@ -254,6 +257,14 @@ mod tests {
         assert_eq!(
             SlashCommand::from_str("subagents-config"),
             Ok(SlashCommand::SubagentConfig)
+        );
+    }
+
+    #[test]
+    fn orchestration_mode_command_is_canonical_name() {
+        assert_eq!(
+            SlashCommand::OrchestrationMode.command(),
+            "orchestration-mode"
         );
     }
 }

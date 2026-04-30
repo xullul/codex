@@ -60,6 +60,7 @@ use codex_features::FeatureToml;
 use codex_features::Features;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
+use codex_features::OrchestrationModeConfigToml;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_login::AuthManagerConfig;
 use codex_mcp::McpConfig;
@@ -90,6 +91,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::ExplorationSubagentsPolicy;
+use codex_tools::OrchestrationMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
@@ -642,6 +644,7 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiAgentV2Config {
     pub exploration_subagents_policy: ExplorationSubagentsPolicy,
+    pub orchestration_mode: OrchestrationMode,
     pub usage_hint_enabled: bool,
     pub usage_hint_text: Option<String>,
     pub hide_spawn_agent_metadata: bool,
@@ -651,6 +654,7 @@ impl Default for MultiAgentV2Config {
     fn default() -> Self {
         Self {
             exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
+            orchestration_mode: OrchestrationMode::Disable,
             usage_hint_enabled: true,
             usage_hint_text: None,
             hide_spawn_agent_metadata: false,
@@ -659,6 +663,27 @@ impl Default for MultiAgentV2Config {
 }
 
 impl MultiAgentV2Config {
+    pub fn orchestration_mode_config_toml(&self) -> OrchestrationModeConfigToml {
+        match self.orchestration_mode {
+            OrchestrationMode::Full => OrchestrationModeConfigToml::Full,
+            OrchestrationMode::Explore => OrchestrationModeConfigToml::Explore,
+            OrchestrationMode::Work => OrchestrationModeConfigToml::Work,
+            OrchestrationMode::Disable => OrchestrationModeConfigToml::Disable,
+        }
+    }
+
+    pub fn set_orchestration_mode_config_toml(&mut self, value: OrchestrationModeConfigToml) {
+        self.orchestration_mode = OrchestrationMode::from(value);
+    }
+
+    pub fn orchestration_mode_config_value(&self) -> &'static str {
+        self.orchestration_mode.config_value()
+    }
+
+    pub fn orchestration_mode_label(&self) -> &'static str {
+        self.orchestration_mode.label()
+    }
+
     pub fn exploration_subagents_config_toml(&self) -> ExplorationSubagentsConfigToml {
         match self.exploration_subagents_policy {
             ExplorationSubagentsPolicy::Prefer => ExplorationSubagentsConfigToml::Prefer,
@@ -1553,9 +1578,15 @@ pub(crate) fn resolve_multi_agent_v2_config(
         .or_else(|| base.and_then(|config| config.exploration_subagents))
         .map(ExplorationSubagentsPolicy::from)
         .unwrap_or(default.exploration_subagents_policy);
+    let orchestration_mode = profile
+        .and_then(|config| config.orchestration_mode)
+        .or_else(|| base.and_then(|config| config.orchestration_mode))
+        .map(OrchestrationMode::from)
+        .unwrap_or(default.orchestration_mode);
 
     MultiAgentV2Config {
         exploration_subagents_policy,
+        orchestration_mode,
         usage_hint_enabled,
         usage_hint_text,
         hide_spawn_agent_metadata,

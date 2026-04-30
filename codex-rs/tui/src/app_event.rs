@@ -37,6 +37,7 @@ use crate::chatwidget::UserMessage;
 use codex_config::types::ApprovalsReviewer;
 use codex_features::ExplorationSubagentsConfigToml;
 use codex_features::Feature;
+use codex_features::OrchestrationModeConfigToml;
 use codex_plugin::PluginCapabilitySummary;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::Personality;
@@ -533,6 +534,11 @@ pub(crate) enum AppEvent {
     /// Update subagent delegation settings and persist them to config.toml.
     UpdateSubagentConfig {
         exploration_subagents: ExplorationSubagentsConfigToml,
+    },
+
+    /// Update orchestration mode and persist it to config.toml.
+    UpdateOrchestrationMode {
+        orchestration_mode: OrchestrationModeConfigToml,
     },
 
     /// Clear all persisted local memory artifacts via the app-server.

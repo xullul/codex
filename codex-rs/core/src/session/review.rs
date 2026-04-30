@@ -52,6 +52,7 @@ pub(super) async fn spawn_review_thread(
     .with_spawn_agent_usage_hint_text(config.multi_agent_v2.usage_hint_text.clone())
     .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
     .with_exploration_subagents_policy(config.multi_agent_v2.exploration_subagents_policy)
+    .with_orchestration_mode(config.multi_agent_v2.orchestration_mode)
     .with_max_concurrent_threads_per_session(config.agent_max_threads)
     .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
         &config.agent_roles,

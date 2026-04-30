@@ -18,6 +18,7 @@ pub struct SpawnAgentToolOptions<'a> {
     pub include_usage_hint: bool,
     pub usage_hint_text: Option<String>,
     pub exploration_subagents_policy: ExplorationSubagentsPolicy,
+    pub orchestration_mode: crate::OrchestrationMode,
     pub max_concurrent_threads_per_session: Option<usize>,
 }
 
@@ -46,6 +47,7 @@ pub fn create_spawn_agent_tool_v1(options: SpawnAgentToolOptions<'_>) -> ToolSpe
             options.include_usage_hint,
             options.usage_hint_text,
             options.exploration_subagents_policy,
+            options.orchestration_mode,
         ),
         strict: false,
         defer_loading: None,
@@ -76,6 +78,7 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions<'_>) -> ToolSpe
             options.include_usage_hint,
             options.usage_hint_text,
             options.exploration_subagents_policy,
+            options.orchestration_mode,
             options.max_concurrent_threads_per_session,
         ),
         strict: false,
@@ -594,6 +597,7 @@ fn spawn_agent_tool_description(
     include_usage_hint: bool,
     usage_hint_text: Option<String>,
     exploration_subagents_policy: ExplorationSubagentsPolicy,
+    orchestration_mode: crate::OrchestrationMode,
 ) -> String {
     let agent_role_guidance = available_models_description.unwrap_or_default();
 
@@ -619,6 +623,7 @@ fn spawn_agent_tool_description(
         })
         .unwrap_or_default();
     let exploration_subagents_guidance = exploration_subagents_policy.usage_guidance();
+    let orchestration_guidance = orchestration_mode.usage_guidance().unwrap_or_default();
     format!(
         r#"
         {tool_description}
@@ -628,6 +633,8 @@ Use `spawn_agent` only when the task is made clearer or faster by delegation und
 {agent_role_usage_hint}
 
 {exploration_subagents_guidance}
+
+{orchestration_guidance}
 
 ### When to delegate vs. do the subtask yourself
 - First, quickly analyze the overall user task and form a succinct high-level plan. Identify which tasks are immediate blockers on the critical path, and which tasks are sidecar tasks that are needed but can run in parallel without blocking the next local step. As part of that plan, explicitly decide what immediate task you should do locally right now. Do this planning step before delegating to agents so you do not hand off the immediate blocking task to a submodel and then waste time waiting on it.
@@ -665,6 +672,7 @@ fn spawn_agent_tool_description_v2(
     include_usage_hint: bool,
     usage_hint_text: Option<String>,
     exploration_subagents_policy: ExplorationSubagentsPolicy,
+    orchestration_mode: crate::OrchestrationMode,
     max_concurrent_threads_per_session: Option<usize>,
 ) -> String {
     let agent_role_guidance = available_models_description.unwrap_or_default();
@@ -699,10 +707,13 @@ The new agent's canonical task name will be provided to it along with the messag
         );
     }
     let exploration_subagents_guidance = exploration_subagents_policy.usage_guidance();
+    let orchestration_guidance = orchestration_mode.usage_guidance().unwrap_or_default();
     format!(
         r#"
         {tool_description}
-{exploration_subagents_guidance}"#
+{exploration_subagents_guidance}
+
+{orchestration_guidance}"#
     )
 }
 
