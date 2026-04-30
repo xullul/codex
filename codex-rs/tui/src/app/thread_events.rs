@@ -21,6 +21,7 @@ pub(super) enum ThreadBufferedEvent {
     Request(ServerRequest),
     HistoryEntryResponse(GetHistoryEntryResponseEvent),
     FeedbackSubmission(FeedbackThreadEvent),
+    SubagentActivity(SubagentActivityEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,7 @@ impl ThreadEventStore {
                 | ThreadBufferedEvent::Notification(ServerNotification::HookStarted(_))
                 | ThreadBufferedEvent::Notification(ServerNotification::HookCompleted(_))
                 | ThreadBufferedEvent::FeedbackSubmission(_)
+                | ThreadBufferedEvent::SubagentActivity(_)
         )
     }
 
@@ -152,7 +154,8 @@ impl ThreadEventStore {
                 ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
-                | ThreadBufferedEvent::FeedbackSubmission(_) => None,
+                | ThreadBufferedEvent::FeedbackSubmission(_)
+                | ThreadBufferedEvent::SubagentActivity(_) => None,
             })
             .collect()
     }
@@ -179,7 +182,8 @@ impl ThreadEventStore {
                         .should_replay_snapshot_request(request),
                     ThreadBufferedEvent::Notification(_)
                     | ThreadBufferedEvent::HistoryEntryResponse(_)
-                    | ThreadBufferedEvent::FeedbackSubmission(_) => true,
+                    | ThreadBufferedEvent::FeedbackSubmission(_)
+                    | ThreadBufferedEvent::SubagentActivity(_) => true,
                 })
                 .cloned()
                 .collect(),

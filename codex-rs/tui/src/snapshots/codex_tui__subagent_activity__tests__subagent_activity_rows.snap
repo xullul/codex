@@ -1,0 +1,8 @@
+---
+source: tui/src/subagent_activity.rs
+expression: render_events(events)
+---
+• Scout [explorer] started
+• Scout [explorer] started command: rg TODO src
+• Scout [explorer] finished search: rust clippy collapsible_if
+• Scout [explorer] finished

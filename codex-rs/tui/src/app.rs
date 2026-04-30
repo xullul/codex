@@ -56,6 +56,7 @@ use crate::model_migration::ModelMigrationOutcome;
 use crate::model_migration::migration_copy_for_models;
 use crate::model_migration::run_model_migration_prompt;
 use crate::multi_agents::agent_picker_status_dot_spans;
+use crate::multi_agents::format_agent_picker_item_description;
 use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
@@ -65,6 +66,7 @@ use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
 use crate::resume_picker::SessionTarget;
+use crate::subagent_activity::SubagentActivityEvent;
 #[cfg(test)]
 use crate::test_support::PathBufExt;
 #[cfg(test)]

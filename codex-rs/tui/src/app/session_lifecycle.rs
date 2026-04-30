@@ -61,7 +61,10 @@ impl App {
                 SelectionItem {
                     name: name.clone(),
                     name_prefix_spans: agent_picker_status_dot_spans(entry.is_closed),
-                    description: Some(uuid.clone()),
+                    description: Some(format_agent_picker_item_description(
+                        *thread_id,
+                        entry.latest_total_tokens,
+                    )),
                     is_current: self.active_thread_id == Some(*thread_id),
                     actions: vec![Box::new(move |tx| {
                         tx.send(AppEvent::SelectAgentThread(id));

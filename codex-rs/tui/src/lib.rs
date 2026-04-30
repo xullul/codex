@@ -157,6 +157,7 @@ mod status;
 mod status_indicator_widget;
 mod streaming;
 mod style;
+mod subagent_activity;
 mod terminal_palette;
 mod terminal_title;
 mod text_formatting;

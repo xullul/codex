@@ -27,7 +27,10 @@ use codex_app_server_protocol::AdditionalNetworkPermissions;
 use codex_app_server_protocol::AdditionalPermissionProfile;
 use codex_app_server_protocol::AgentMessageDeltaNotification;
 use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
+use codex_app_server_protocol::CommandExecutionSource;
+use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::ConfigWarningNotification;
+use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerStartupState;
 use codex_app_server_protocol::McpServerStatusUpdatedNotification;
@@ -1221,6 +1224,188 @@ async fn token_usage_update_refreshes_status_line_with_runtime_context_window() 
 }
 
 #[tokio::test]
+async fn inactive_subagent_activity_is_mirrored_to_primary_thread() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let primary_thread_id = ThreadId::new();
+    let agent_thread_id = ThreadId::new();
+    app.enqueue_primary_thread_session(
+        test_thread_session(primary_thread_id, test_path_buf("/tmp/main")),
+        Vec::new(),
+    )
+    .await?;
+    app.upsert_agent_picker_thread(
+        agent_thread_id,
+        Some("Scout".to_string()),
+        Some("explorer".to_string()),
+        /*is_closed*/ false,
+    );
+    app.thread_event_channels.insert(
+        agent_thread_id,
+        ThreadEventChannel::new_with_session(
+            THREAD_EVENT_CHANNEL_CAPACITY,
+            test_thread_session(agent_thread_id, test_path_buf("/tmp/agent")),
+            Vec::new(),
+        ),
+    );
+
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        ServerNotification::ItemStarted(ItemStartedNotification {
+            thread_id: agent_thread_id.to_string(),
+            turn_id: "turn-1".to_string(),
+            item: ThreadItem::CommandExecution {
+                id: "cmd-1".to_string(),
+                command: "rg TODO src".to_string(),
+                cwd: test_path_buf("/tmp/agent").abs(),
+                process_id: None,
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::InProgress,
+                command_actions: Vec::new(),
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            },
+        }),
+    )
+    .await?;
+
+    let rx = app
+        .active_thread_rx
+        .as_mut()
+        .expect("primary thread receiver should be active");
+    let event = time::timeout(Duration::from_millis(50), rx.recv())
+        .await
+        .expect("timed out waiting for mirrored subagent activity")
+        .expect("channel closed unexpectedly");
+    assert!(matches!(event, ThreadBufferedEvent::SubagentActivity(_)));
+
+    app.handle_thread_event_now(event);
+    let mut rendered = String::new();
+    while let Ok(event) = app_event_rx.try_recv() {
+        if let AppEvent::InsertHistoryCell(cell) = event {
+            rendered.push_str(&lines_to_single_string(
+                &cell.transcript_lines(/*width*/ 120),
+            ));
+        }
+    }
+    assert!(rendered.contains("Scout [explorer] started command: rg TODO src"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn subagent_token_usage_is_mirrored_once_per_exact_total() -> Result<()> {
+    let mut app = make_test_app().await;
+    let primary_thread_id = ThreadId::new();
+    let agent_thread_id = ThreadId::new();
+    app.enqueue_primary_thread_session(
+        test_thread_session(primary_thread_id, test_path_buf("/tmp/main")),
+        Vec::new(),
+    )
+    .await?;
+    app.upsert_agent_picker_thread(
+        agent_thread_id,
+        Some("Scout".to_string()),
+        Some("explorer".to_string()),
+        /*is_closed*/ false,
+    );
+    app.thread_event_channels.insert(
+        agent_thread_id,
+        ThreadEventChannel::new_with_session(
+            THREAD_EVENT_CHANNEL_CAPACITY,
+            test_thread_session(agent_thread_id, test_path_buf("/tmp/agent")),
+            Vec::new(),
+        ),
+    );
+
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        token_usage_notification(
+            agent_thread_id,
+            "turn-1",
+            /*model_context_window*/ None,
+        ),
+    )
+    .await?;
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        token_usage_notification(
+            agent_thread_id,
+            "turn-1",
+            /*model_context_window*/ None,
+        ),
+    )
+    .await?;
+
+    let rx = app
+        .active_thread_rx
+        .as_mut()
+        .expect("primary thread receiver should be active");
+    let first_event = time::timeout(Duration::from_millis(50), rx.recv())
+        .await
+        .expect("timed out waiting for first token usage activity")
+        .expect("channel closed unexpectedly");
+    assert!(matches!(
+        first_event,
+        ThreadBufferedEvent::SubagentActivity(SubagentActivityEvent {
+            kind: crate::subagent_activity::SubagentActivityKind::TokenUsage { total_tokens: 10 },
+            ..
+        })
+    ));
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    assert_eq!(
+        app.agent_navigation
+            .get(&agent_thread_id)
+            .and_then(|entry| entry.latest_total_tokens),
+        Some(10)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn side_thread_activity_is_not_mirrored_to_primary_thread() -> Result<()> {
+    let mut app = make_test_app().await;
+    let primary_thread_id = ThreadId::new();
+    let side_thread_id = ThreadId::new();
+    app.enqueue_primary_thread_session(
+        test_thread_session(primary_thread_id, test_path_buf("/tmp/main")),
+        Vec::new(),
+    )
+    .await?;
+    app.side_threads
+        .insert(side_thread_id, SideThreadState::new(primary_thread_id));
+    app.upsert_agent_picker_thread(
+        side_thread_id,
+        Some("Side".to_string()),
+        Some("worker".to_string()),
+        /*is_closed*/ false,
+    );
+    app.thread_event_channels.insert(
+        side_thread_id,
+        ThreadEventChannel::new_with_session(
+            THREAD_EVENT_CHANNEL_CAPACITY,
+            test_thread_session(side_thread_id, test_path_buf("/tmp/side")),
+            Vec::new(),
+        ),
+    );
+
+    app.enqueue_thread_notification(
+        side_thread_id,
+        turn_started_notification(side_thread_id, "t1"),
+    )
+    .await?;
+
+    let rx = app
+        .active_thread_rx
+        .as_mut()
+        .expect("primary thread receiver should be active");
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn open_agent_picker_keeps_missing_threads_for_replay() -> Result<()> {
     let mut app = make_test_app().await;
     let mut app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
@@ -1239,6 +1424,7 @@ async fn open_agent_picker_keeps_missing_threads_for_replay() -> Result<()> {
             agent_nickname: None,
             agent_role: None,
             is_closed: true,
+            latest_total_tokens: None,
         })
     );
     assert_eq!(app.agent_navigation.ordered_thread_ids(), vec![thread_id]);
@@ -1270,6 +1456,7 @@ async fn open_agent_picker_preserves_cached_metadata_for_replay_threads() -> Res
             agent_nickname: Some("Robie".to_string()),
             agent_role: Some("explorer".to_string()),
             is_closed: true,
+            latest_total_tokens: None,
         })
     );
     Ok(())
@@ -1320,6 +1507,7 @@ async fn open_agent_picker_marks_terminal_read_errors_closed() -> Result<()> {
             agent_nickname: Some("Robie".to_string()),
             agent_role: Some("explorer".to_string()),
             is_closed: true,
+            latest_total_tokens: None,
         })
     );
     Ok(())
@@ -1346,6 +1534,7 @@ async fn open_agent_picker_marks_loaded_threads_open() -> Result<()> {
             agent_nickname: None,
             agent_role: None,
             is_closed: false,
+            latest_total_tokens: None,
         })
     );
     Ok(())
@@ -2908,6 +3097,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
             agent_nickname: Some("Robie".to_string()),
             agent_role: Some("explorer".to_string()),
             is_closed: false,
+            latest_total_tokens: None,
         })
     );
 
@@ -3083,6 +3273,15 @@ fn agent_picker_item_name_snapshot() {
                 /*agent_nickname*/ None, /*agent_role*/ None, /*is_primary*/ false
             ),
             thread_id
+        ),
+        format!(
+            "{} | {}",
+            format_agent_picker_item_name(
+                Some("Scout"),
+                Some("explorer"),
+                /*is_primary*/ false
+            ),
+            format_agent_picker_item_description(thread_id, Some(8_400))
         ),
     ]
     .join("\n");

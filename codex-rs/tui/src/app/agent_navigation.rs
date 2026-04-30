@@ -92,8 +92,27 @@ impl AgentNavigationState {
                 agent_nickname,
                 agent_role,
                 is_closed,
+                latest_total_tokens: self
+                    .threads
+                    .get(&thread_id)
+                    .and_then(|entry| entry.latest_total_tokens),
             },
         );
+    }
+
+    pub(crate) fn set_latest_total_tokens(
+        &mut self,
+        thread_id: ThreadId,
+        total_tokens: i64,
+    ) -> bool {
+        let Some(entry) = self.threads.get_mut(&thread_id) else {
+            return false;
+        };
+        if entry.latest_total_tokens == Some(total_tokens) {
+            return false;
+        }
+        entry.latest_total_tokens = Some(total_tokens);
+        true
     }
 
     /// Marks a thread as closed without removing it from the traversal cache.
