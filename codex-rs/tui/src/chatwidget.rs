@@ -6,8 +6,9 @@
 //! The UI has both committed transcript cells (finalized `HistoryCell`s) and an in-flight active
 //! cell (`ChatWidget.active_cell`) that can mutate in place while streaming (often representing a
 //! coalesced exec/tool group). The transcript overlay (`Ctrl+T`) renders committed cells plus a
-//! cached, render-only live tail derived from the current active cell so in-flight tool calls are
-//! visible immediately.
+//! cached, render-only live tail derived from the current active cell so in-flight non-exec tool
+//! calls are visible immediately. Running exec calls render through the bottom-pane status row
+//! instead so the same action does not appear twice.
 //!
 //! The transcript overlay is kept in sync by `App::overlay_forward_event`, which syncs a live tail
 //! during draws using `active_cell_transcript_key()` and `active_cell_transcript_lines()`. The
@@ -12310,15 +12311,17 @@ impl ChatWidget {
     pub(crate) fn active_cell_transcript_key(&self) -> Option<ActiveCellTranscriptKey> {
         let cell = self.active_cell.as_ref();
         let hook_cell = self.active_hook_cell.as_ref();
-        if cell.is_none() && hook_cell.is_none() {
+        if (cell.is_none() || self.active_cell_is_live_exec()) && hook_cell.is_none() {
             return None;
         }
         Some(ActiveCellTranscriptKey {
             revision: self.active_cell_revision,
             is_stream_continuation: cell
+                .filter(|_| !self.active_cell_is_live_exec())
                 .map(|cell| cell.is_stream_continuation())
                 .unwrap_or(false),
             animation_tick: cell
+                .filter(|_| !self.active_cell_is_live_exec())
                 .and_then(|cell| cell.transcript_animation_tick())
                 .or_else(|| {
                     hook_cell.and_then(super::history_cell::HistoryCell::transcript_animation_tick)
@@ -12334,7 +12337,9 @@ impl ChatWidget {
     /// mismatches between the main viewport and the transcript overlay.
     pub(crate) fn active_cell_transcript_lines(&self, width: u16) -> Option<Vec<Line<'static>>> {
         let mut lines = Vec::new();
-        if let Some(cell) = self.active_cell.as_ref() {
+        if !self.active_cell_is_live_exec()
+            && let Some(cell) = self.active_cell.as_ref()
+        {
             lines.extend(cell.transcript_lines(width));
         }
         if let Some(hook_cell) = self.active_hook_cell.as_ref() {
@@ -12365,10 +12370,13 @@ impl ChatWidget {
 
     fn as_renderable(&self) -> RenderableItem<'_> {
         let active_cell_renderable = match &self.active_cell {
-            Some(cell) => RenderableItem::Borrowed(cell).inset(Insets::tlbr(
-                /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
-            )),
+            Some(cell) if !self.active_cell_is_live_exec() => {
+                RenderableItem::Borrowed(cell).inset(Insets::tlbr(
+                    /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
+                ))
+            }
             None => RenderableItem::Owned(Box::new(())),
+            Some(_) => RenderableItem::Owned(Box::new(())),
         };
         let active_hook_cell_renderable = match &self.active_hook_cell {
             Some(cell) if cell.should_render() => {
@@ -12388,6 +12396,13 @@ impl ChatWidget {
             )),
         );
         RenderableItem::Owned(Box::new(flex))
+    }
+
+    fn active_cell_is_live_exec(&self) -> bool {
+        self.active_cell
+            .as_ref()
+            .and_then(|cell| cell.as_any().downcast_ref::<ExecCell>())
+            .is_some_and(ExecCell::is_active)
     }
 }
 
