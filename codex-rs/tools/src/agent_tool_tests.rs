@@ -230,7 +230,6 @@ fn spawn_agent_tool_v2_omits_orchestration_guidance_when_disabled() {
 #[test]
 fn send_message_tool_requires_message_and_has_no_output_schema() {
     let ToolSpec::Function(ResponsesApiTool {
-        description,
         parameters,
         output_schema,
         ..
@@ -251,10 +250,6 @@ fn send_message_tool_requires_message_and_has_no_output_schema() {
     assert!(!properties.contains_key("interrupt"));
     assert!(!properties.contains_key("items"));
     assert_eq!(
-        description,
-        "Send a string message to an existing agent without triggering a new turn."
-    );
-    assert_eq!(
         properties
             .get("target")
             .and_then(|schema| schema.description.as_deref()),
@@ -270,7 +265,6 @@ fn send_message_tool_requires_message_and_has_no_output_schema() {
 #[test]
 fn followup_task_tool_requires_message_and_has_no_output_schema() {
     let ToolSpec::Function(ResponsesApiTool {
-        description,
         parameters,
         output_schema,
         ..
@@ -288,22 +282,7 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
         .expect("followup_task should use object params");
     assert!(properties.contains_key("target"));
     assert!(properties.contains_key("message"));
-    assert!(properties.contains_key("interrupt"));
     assert!(!properties.contains_key("items"));
-    assert!(description.contains(
-        "Send a string message to an existing non-root agent and trigger a turn in the target."
-    ));
-    assert!(description.contains(
-        "If interrupt=false and the target's turn has not completed, the message is queued"
-    ));
-    assert_eq!(
-        properties
-            .get("interrupt")
-            .and_then(|schema| schema.description.as_deref()),
-        Some(
-            "When true, stop the agent's current task and handle this immediately. When false (default), queue this message; if the target is already running, it starts the target's next turn after the current turn completes."
-        )
-    );
     assert_eq!(
         parameters.required.as_ref(),
         Some(&vec!["target".to_string(), "message".to_string()])

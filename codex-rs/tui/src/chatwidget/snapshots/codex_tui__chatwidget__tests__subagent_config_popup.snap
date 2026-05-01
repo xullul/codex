@@ -3,15 +3,11 @@ source: tui/src/chatwidget/tests/popups_and_settings.rs
 expression: popup
 ---
   Subagent Configuration
-  Choose how Codex keeps exploration out of the main context.
+  Configure how Codex delegates to subagents.
 
-  1. Prefer          Proactively use explorer subagents to keep repository
-                     context lean.
-› 2. Auto (current)  Use explorer subagents for large or multi-topic
-                     discovery.
-  3. Less            Only use explorer subagents when the request clearly asks
-                     for them.
-  4. Disable         Do not proactively use explorer subagents for codebase
-                     discovery.
+› 1. Exploration preference  Currently Auto. Configure proactive explorer
+                             delegation.
+  2. Orchestration mode      Currently Disable. Configure multi-agent planning
+                             guidance.
 
   Press enter to confirm or esc to go back

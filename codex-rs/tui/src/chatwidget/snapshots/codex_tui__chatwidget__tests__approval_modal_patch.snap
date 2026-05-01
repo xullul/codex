@@ -1,17 +1,12 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
-expression: terminal.backend().vt100().screen().contents()
+expression: contents
 ---
 
 
   Apply these edits?
 
   Reason: The model wants to apply changes
-
-  README.md (+2 -0)
-
-    1 +hello
-    2 +world
 
 › 1. Yes, proceed (y)
   2. Yes, and don't ask again for these files (a)

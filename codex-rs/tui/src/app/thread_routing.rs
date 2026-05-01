@@ -195,6 +195,17 @@ impl App {
         store.session.as_ref().map(|session| session.cwd.clone())
     }
 
+    async fn thread_file_change_changes(
+        &self,
+        thread_id: ThreadId,
+        turn_id: &str,
+        item_id: &str,
+    ) -> Option<Vec<codex_app_server_protocol::FileUpdateChange>> {
+        let channel = self.thread_event_channels.get(&thread_id)?;
+        let store = channel.store.lock().await;
+        store.file_change_changes(turn_id, item_id)
+    }
+
     pub(super) async fn interactive_request_for_thread_request(
         &self,
         thread_id: ThreadId,
@@ -265,7 +276,11 @@ impl App {
                         .thread_cwd(thread_id)
                         .await
                         .unwrap_or_else(|| self.config.cwd.clone()),
-                    changes: HashMap::new(),
+                    changes: self
+                        .thread_file_change_changes(thread_id, &params.turn_id, &params.item_id)
+                        .await
+                        .map(crate::app_server_approval_conversions::file_update_changes_to_core)
+                        .unwrap_or_default(),
                 }),
             ),
             ServerRequest::McpServerElicitationRequest { request_id, params } => {
@@ -312,6 +327,7 @@ impl App {
     pub(super) fn push_thread_interactive_request(&mut self, request: ThreadInteractiveRequest) {
         match request {
             ThreadInteractiveRequest::Approval(request) => {
+                self.render_inactive_patch_preview(&request);
                 self.chat_widget.push_approval_request(request);
             }
             ThreadInteractiveRequest::McpServerElicitation(request) => {
@@ -319,6 +335,23 @@ impl App {
                     .push_mcp_server_elicitation_request(request);
             }
         }
+    }
+
+    fn render_inactive_patch_preview(&mut self, request: &ApprovalRequest) {
+        let ApprovalRequest::ApplyPatch {
+            thread_label,
+            cwd,
+            changes,
+            ..
+        } = request
+        else {
+            return;
+        };
+        if thread_label.is_none() || changes.is_empty() {
+            return;
+        }
+        self.chat_widget
+            .add_to_history(history_cell::new_patch_event(changes.clone(), cwd));
     }
 
     pub(super) async fn pending_inactive_thread_requests(&self) -> Vec<(ThreadId, ServerRequest)> {
@@ -497,7 +530,6 @@ impl App {
                 cwd,
                 approval_policy,
                 approvals_reviewer,
-                sandbox_policy,
                 permission_profile,
                 model,
                 effort,
@@ -573,16 +605,24 @@ impl App {
                     }
                 }
                 if should_start_turn {
+                    let config = self.chat_widget.config_ref();
+                    let approvals_reviewer =
+                        approvals_reviewer.unwrap_or(config.approvals_reviewer);
+                    let active_permission_profile =
+                        if config.permissions.permission_profile() == permission_profile.clone() {
+                            config.permissions.active_permission_profile()
+                        } else {
+                            None
+                        };
                     app_server
                         .turn_start(
                             thread_id,
                             items.to_vec(),
                             cwd.clone(),
                             approval_policy,
-                            approvals_reviewer
-                                .unwrap_or(self.chat_widget.config_ref().approvals_reviewer),
-                            sandbox_policy.clone(),
+                            approvals_reviewer,
                             permission_profile.clone(),
+                            active_permission_profile,
                             model.to_string(),
                             effort,
                             *summary,
@@ -672,10 +712,12 @@ impl App {
             }
             AppCommandView::ReloadUserConfig => {
                 app_server.reload_user_config().await?;
+                self.refresh_in_memory_config_from_disk().await?;
                 Ok(true)
             }
             AppCommandView::OverrideTurnContext { .. } => Ok(true),
-            AppCommandView::Other(Op::ApproveGuardianDeniedAction { event }) => {
+            AppCommandView::ApproveGuardianDeniedAction { event }
+            | AppCommandView::Other(Op::ApproveGuardianDeniedAction { event }) => {
                 app_server
                     .thread_approve_guardian_denied_action(thread_id, event)
                     .await?;
@@ -823,7 +865,7 @@ impl App {
         let notification_status_change = SideParentStatusChange::for_notification(&notification);
 
         if should_send {
-            match sender.try_send(ThreadBufferedEvent::Notification(notification)) {
+            match sender.try_send(ThreadBufferedEvent::Notification(notification.clone())) {
                 Ok(()) => {}
                 Err(TrySendError::Full(event)) => {
                     tokio::spawn(async move {
@@ -842,9 +884,91 @@ impl App {
         } else if let Some(change) = notification_status_change {
             self.apply_side_parent_status_change(thread_id, change);
         }
+        self.mirror_subagent_activity_to_primary(thread_id, &notification)
+            .await?;
         self.refresh_pending_thread_approvals().await;
         if subagent_activity_changed {
             self.refresh_subagent_activity_panel();
+        }
+        Ok(())
+    }
+
+    async fn mirror_subagent_activity_to_primary(
+        &mut self,
+        thread_id: ThreadId,
+        notification: &ServerNotification,
+    ) -> Result<()> {
+        let Some(primary_thread_id) = self.primary_thread_id else {
+            return Ok(());
+        };
+        if thread_id == primary_thread_id || self.side_threads.contains_key(&thread_id) {
+            return Ok(());
+        }
+        let Some(entry) = self.agent_navigation.get(&thread_id).cloned() else {
+            return Ok(());
+        };
+
+        if let ServerNotification::ThreadTokenUsageUpdated(notification) = notification
+            && !self
+                .agent_navigation
+                .set_latest_total_tokens(thread_id, notification.token_usage.total.total_tokens)
+        {
+            return Ok(());
+        }
+
+        let Some(activity) = crate::subagent_activity::event_from_notification(
+            thread_id,
+            entry.agent_nickname,
+            entry.agent_role,
+            notification,
+        ) else {
+            return Ok(());
+        };
+
+        self.enqueue_thread_subagent_activity(primary_thread_id, activity)
+            .await
+    }
+
+    async fn enqueue_thread_subagent_activity(
+        &mut self,
+        thread_id: ThreadId,
+        activity: SubagentActivityEvent,
+    ) -> Result<()> {
+        let (sender, store) = {
+            let channel = self.ensure_thread_channel(thread_id);
+            (channel.sender.clone(), Arc::clone(&channel.store))
+        };
+
+        let should_send = {
+            let mut guard = store.lock().await;
+            guard
+                .buffer
+                .push_back(ThreadBufferedEvent::SubagentActivity(activity.clone()));
+            if guard.buffer.len() > guard.capacity
+                && let Some(removed) = guard.buffer.pop_front()
+                && let ThreadBufferedEvent::Request(request) = &removed
+            {
+                guard
+                    .pending_interactive_replay
+                    .note_evicted_server_request(request);
+            }
+            guard.active
+        };
+
+        if should_send {
+            match sender.try_send(ThreadBufferedEvent::SubagentActivity(activity)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(event)) => {
+                    tokio::spawn(async move {
+                        if let Err(err) = sender.send(event).await {
+                            tracing::warn!("thread {thread_id} event channel closed: {err}");
+                        }
+                    });
+                }
+                Err(TrySendError::Closed(_)) => {
+                    tracing::warn!("thread {thread_id} event channel closed");
+                }
+            }
         }
         Ok(())
     }
@@ -1056,8 +1180,18 @@ impl App {
         self.chat_widget
             .set_initial_user_message_submit_suppressed(/*suppressed*/ true);
         self.chat_widget.handle_thread_session(session);
+        let should_buffer_initial_replay =
+            self.terminal_resize_reflow_enabled() && !turns.is_empty();
+        if should_buffer_initial_replay {
+            self.app_event_tx
+                .send(AppEvent::BeginInitialHistoryReplayBuffer);
+        }
         self.chat_widget
             .replay_thread_turns(turns, ReplayKind::ResumeInitialMessages);
+        if should_buffer_initial_replay {
+            self.app_event_tx
+                .send(AppEvent::EndInitialHistoryReplayBuffer);
+        }
         let pending = std::mem::take(&mut self.pending_primary_events);
         for pending_event in pending {
             match pending_event {
@@ -1074,6 +1208,10 @@ impl App {
                 }
                 ThreadBufferedEvent::FeedbackSubmission(event) => {
                     self.enqueue_thread_feedback_event(thread_id, event).await;
+                }
+                ThreadBufferedEvent::SubagentActivity(event) => {
+                    self.enqueue_thread_subagent_activity(thread_id, event)
+                        .await?;
                 }
             }
         }
@@ -1365,6 +1503,10 @@ impl App {
             ThreadBufferedEvent::FeedbackSubmission(event) => {
                 self.handle_feedback_thread_event(event);
             }
+            ThreadBufferedEvent::SubagentActivity(event) => {
+                self.chat_widget
+                    .add_plain_history_lines(crate::subagent_activity::render(event).into_lines());
+            }
         }
         if needs_refresh {
             self.refresh_status_line();
@@ -1388,6 +1530,10 @@ impl App {
             }
             ThreadBufferedEvent::FeedbackSubmission(event) => {
                 self.handle_feedback_thread_event(event);
+            }
+            ThreadBufferedEvent::SubagentActivity(event) => {
+                self.chat_widget
+                    .add_plain_history_lines(crate::subagent_activity::render(event).into_lines());
             }
         }
     }

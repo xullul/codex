@@ -6,6 +6,7 @@
 
 use crate::history_cell::PlainHistoryCell;
 use crate::render::line_utils::prefix_lines;
+use crate::status::format_tokens_compact;
 use crate::text_formatting::truncate_text;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
@@ -43,6 +44,8 @@ pub(crate) struct AgentPickerThreadEntry {
     pub(crate) agent_role: Option<String>,
     /// Whether the thread has emitted a close event and should render dimmed.
     pub(crate) is_closed: bool,
+    /// Latest mirrored total token usage for this agent thread.
+    pub(crate) latest_total_tokens: Option<i64>,
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +89,21 @@ pub(crate) fn format_agent_picker_item_name(
         (None, Some(agent_role)) => format!("[{agent_role}]"),
         (None, None) => "Agent".to_string(),
     }
+}
+
+pub(crate) fn format_agent_picker_item_description(
+    thread_id: ThreadId,
+    latest_total_tokens: Option<i64>,
+) -> String {
+    let uuid = thread_id.to_string();
+    match latest_total_tokens {
+        Some(total_tokens) => format!("{} tokens · {uuid}", format_agent_tokens(total_tokens)),
+        None => uuid,
+    }
+}
+
+pub(crate) fn format_agent_tokens(total_tokens: i64) -> String {
+    format_tokens_compact(total_tokens).to_ascii_lowercase()
 }
 
 pub(crate) fn previous_agent_shortcut() -> crate::key_hint::KeyBinding {
