@@ -53,19 +53,21 @@ pub(crate) async fn run_command(
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(err) = stdin.write_all(input_json.as_bytes()).await
-    {
-        let _ = child.kill().await;
-        return CommandRunResult {
-            started_at,
-            completed_at: chrono::Utc::now().timestamp(),
-            duration_ms: started.elapsed().as_millis().try_into().unwrap_or(i64::MAX),
-            exit_code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-            error: Some(format!("failed to write hook stdin: {err}")),
-        };
+    if let Some(mut stdin) = child.stdin.take() {
+        let write_result = stdin.write_all(input_json.as_bytes()).await;
+        drop(stdin);
+        if let Err(err) = write_result {
+            let _ = child.kill().await;
+            return CommandRunResult {
+                started_at,
+                completed_at: chrono::Utc::now().timestamp(),
+                duration_ms: started.elapsed().as_millis().try_into().unwrap_or(i64::MAX),
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                error: Some(format!("failed to write hook stdin: {err}")),
+            };
+        }
     }
 
     let timeout_duration = Duration::from_secs(handler.timeout_sec);
@@ -108,12 +110,12 @@ fn build_command(shell: &CommandShell, handler: &ConfiguredHandler) -> Command {
     };
     if shell.program.is_empty() {
         command.arg(&handler.command);
-        command
     } else {
         command.args(&shell.args);
         command.arg(&handler.command);
-        command
     }
+    command.envs(&handler.env);
+    command
 }
 
 fn default_shell_command() -> Command {
