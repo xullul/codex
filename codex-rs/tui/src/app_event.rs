@@ -107,6 +107,10 @@ pub(crate) enum RateLimitRefreshOrigin {
 pub(crate) enum AppEvent {
     /// Open the agent picker for switching active threads.
     OpenAgentPicker,
+    /// Open the subagent exploration preference popup.
+    OpenSubagentExplorationConfig,
+    /// Open the orchestration mode popup.
+    OpenOrchestrationModeConfig,
     /// Switch the active thread to the selected agent.
     SelectAgentThread(ThreadId),
 

@@ -31,6 +31,40 @@ fn recall_latest_after_clearing(chat: &mut ChatWidget) -> String {
 }
 
 #[tokio::test]
+async fn multi_agent_settings_slash_aliases_open_subagent_config_popup() {
+    for command in [
+        "/subagent-config",
+        "/subagents-config",
+        "/orchestration-mode",
+        "/orchestrator-mode",
+    ] {
+        let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+        chat.thread_id = Some(ThreadId::new());
+        chat.handle_codex_event(Event {
+            id: "turn-start".into(),
+            msg: EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: ModeKind::Default,
+            }),
+        });
+
+        queue_composer_text_with_tab(&mut chat, command);
+        chat.handle_codex_event(Event {
+            id: "turn-complete".into(),
+            msg: EventMsg::TurnComplete(turn_complete_event("turn-1", Some("done"))),
+        });
+
+        let popup = render_bottom_popup(&chat, /*width*/ 80);
+        assert!(
+            popup.contains("Subagent Configuration"),
+            "expected {command} to open subagent config popup, got {popup:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

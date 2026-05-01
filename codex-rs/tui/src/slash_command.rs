@@ -33,9 +33,13 @@ pub enum SlashCommand {
     Plan,
     Collab,
     Agent,
-    #[strum(to_string = "subagent-config", serialize = "subagents-config")]
+    #[strum(
+        to_string = "subagent-config",
+        serialize = "subagents-config",
+        serialize = "orchestration-mode",
+        serialize = "orchestrator-mode"
+    )]
     SubagentConfig,
-    OrchestrationMode,
     Side,
     // Undo,
     Copy,
@@ -110,7 +114,6 @@ impl SlashCommand {
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::SubagentConfig => "configure subagent delegation preferences",
-            SlashCommand::OrchestrationMode => "configure agent orchestration preferences",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
@@ -199,7 +202,6 @@ impl SlashCommand {
             | SlashCommand::Exit
             | SlashCommand::Side => true,
             SlashCommand::SubagentConfig => true,
-            SlashCommand::OrchestrationMode => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
             SlashCommand::Realtime => true,
@@ -261,10 +263,18 @@ mod tests {
     }
 
     #[test]
-    fn orchestration_mode_command_is_canonical_name() {
+    fn orchestration_mode_alias_parses_to_subagent_config_command() {
         assert_eq!(
-            SlashCommand::OrchestrationMode.command(),
-            "orchestration-mode"
+            SlashCommand::from_str("orchestration-mode"),
+            Ok(SlashCommand::SubagentConfig)
+        );
+    }
+
+    #[test]
+    fn orchestrator_mode_alias_parses_to_subagent_config_command() {
+        assert_eq!(
+            SlashCommand::from_str("orchestrator-mode"),
+            Ok(SlashCommand::SubagentConfig)
         );
     }
 }

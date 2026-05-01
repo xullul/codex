@@ -487,8 +487,16 @@ impl App {
         let enabled = self.config.features.enabled(Feature::MultiAgentV2);
         let mut next_multi_agent_v2 = self.config.multi_agent_v2.clone();
         next_multi_agent_v2.set_exploration_subagents_config_toml(exploration_subagents);
+        let disable_orchestration = exploration_subagents
+            == ExplorationSubagentsConfigToml::Disable
+            && next_multi_agent_v2.orchestration_mode_config_toml()
+                != OrchestrationModeConfigToml::Disable;
+        if disable_orchestration {
+            next_multi_agent_v2
+                .set_orchestration_mode_config_toml(OrchestrationModeConfigToml::Disable);
+        }
         let policy_value = next_multi_agent_v2.exploration_subagents_config_value();
-        let edits = [
+        let mut edits = vec![
             ConfigEdit::SetPath {
                 segments: scoped_segments("enabled"),
                 value: enabled.into(),
@@ -498,6 +506,12 @@ impl App {
                 value: policy_value.into(),
             },
         ];
+        if disable_orchestration {
+            edits.push(ConfigEdit::SetPath {
+                segments: scoped_segments("orchestration_mode"),
+                value: next_multi_agent_v2.orchestration_mode_config_value().into(),
+            });
+        }
 
         if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
             .with_edits(edits)
@@ -512,6 +526,10 @@ impl App {
 
         self.config.multi_agent_v2 = next_multi_agent_v2;
         self.chat_widget.set_subagent_config(exploration_subagents);
+        if disable_orchestration {
+            self.chat_widget
+                .set_orchestration_mode(OrchestrationModeConfigToml::Disable);
+        }
         self.chat_widget.submit_op(AppCommand::reload_user_config());
         self.chat_widget.add_info_message(
             format!(

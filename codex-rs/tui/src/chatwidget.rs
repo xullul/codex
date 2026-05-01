@@ -2802,6 +2802,43 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_subagent_config_popup(&mut self) {
+        let exploration_label = self.config.multi_agent_v2.exploration_subagents_label();
+        let orchestration_label = self.config.multi_agent_v2.orchestration_mode_label();
+        let items = vec![
+            SelectionItem {
+                name: "Exploration preference".to_string(),
+                description: Some(format!(
+                    "Currently {exploration_label}. Configure proactive explorer delegation."
+                )),
+                actions: vec![Box::new(|tx| {
+                    tx.send(AppEvent::OpenSubagentExplorationConfig);
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Orchestration mode".to_string(),
+                description: Some(format!(
+                    "Currently {orchestration_label}. Configure multi-agent planning guidance."
+                )),
+                actions: vec![Box::new(|tx| {
+                    tx.send(AppEvent::OpenOrchestrationModeConfig);
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Subagent Configuration".to_string()),
+            subtitle: Some("Configure how Codex delegates to subagents.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_subagent_exploration_config_popup(&mut self) {
         let current = self
             .config
             .multi_agent_v2
@@ -2849,7 +2886,7 @@ impl ChatWidget {
             .collect();
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some("Subagent Configuration".to_string()),
+            title: Some("Subagent Exploration".to_string()),
             subtitle: Some(
                 "Choose how proactively Codex delegates codebase exploration.".to_string(),
             ),

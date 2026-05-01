@@ -1816,7 +1816,7 @@ async fn subagent_config_popup_snapshot() {
 async fn subagent_config_popup_sends_selected_policy() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    chat.open_subagent_config_popup();
+    chat.open_subagent_exploration_config_popup();
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
@@ -1826,6 +1826,16 @@ async fn subagent_config_popup_sends_selected_policy() {
             exploration_subagents: ExplorationSubagentsConfigToml::Prefer
         })
     );
+}
+
+#[tokio::test]
+async fn subagent_config_popup_opens_exploration_settings() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.open_subagent_config_popup();
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::OpenSubagentExplorationConfig));
 }
 
 #[tokio::test]

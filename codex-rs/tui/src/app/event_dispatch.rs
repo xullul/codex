@@ -1381,6 +1381,12 @@ impl App {
             AppEvent::OpenAgentPicker => {
                 self.open_agent_picker(app_server).await;
             }
+            AppEvent::OpenSubagentExplorationConfig => {
+                self.chat_widget.open_subagent_exploration_config_popup();
+            }
+            AppEvent::OpenOrchestrationModeConfig => {
+                self.chat_widget.open_orchestration_mode_popup();
+            }
             AppEvent::SelectAgentThread(thread_id) => {
                 self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                     .await?;

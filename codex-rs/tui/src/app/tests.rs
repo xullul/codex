@@ -1770,6 +1770,53 @@ async fn update_subagent_config_persists_updates_widget_and_reloads_session() ->
 }
 
 #[tokio::test]
+async fn update_subagent_config_disable_also_disables_orchestration() -> Result<()> {
+    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let codex_home = tempdir()?;
+    app.config.codex_home = codex_home.path().to_path_buf().abs();
+    app.config
+        .multi_agent_v2
+        .set_orchestration_mode_config_toml(OrchestrationModeConfigToml::Full);
+    app.chat_widget
+        .set_orchestration_mode(OrchestrationModeConfigToml::Full);
+
+    app.update_subagent_config(ExplorationSubagentsConfigToml::Disable)
+        .await;
+
+    assert_eq!(
+        app.config.multi_agent_v2.orchestration_mode_config_toml(),
+        OrchestrationModeConfigToml::Disable
+    );
+    assert_eq!(
+        app.chat_widget
+            .config_ref()
+            .multi_agent_v2
+            .orchestration_mode_config_toml(),
+        OrchestrationModeConfigToml::Disable
+    );
+
+    let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
+    let config_value = toml::from_str::<TomlValue>(&config)?;
+    let multi_agent_v2 = config_value
+        .as_table()
+        .and_then(|table| table.get("features"))
+        .and_then(TomlValue::as_table)
+        .and_then(|features| features.get("multi_agent_v2"))
+        .and_then(TomlValue::as_table)
+        .expect("multi_agent_v2 table should exist");
+    assert_eq!(
+        multi_agent_v2.get("exploration_subagents"),
+        Some(&TomlValue::String("disable".to_string()))
+    );
+    assert_eq!(
+        multi_agent_v2.get("orchestration_mode"),
+        Some(&TomlValue::String("disable".to_string()))
+    );
+    assert_eq!(op_rx.try_recv(), Ok(Op::ReloadUserConfig));
+    Ok(())
+}
+
+#[tokio::test]
 async fn update_orchestration_mode_persists_updates_widget_and_reloads_session() -> Result<()> {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;

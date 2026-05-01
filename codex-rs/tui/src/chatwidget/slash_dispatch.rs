@@ -220,9 +220,6 @@ impl ChatWidget {
             SlashCommand::SubagentConfig => {
                 self.open_subagent_config_popup();
             }
-            SlashCommand::OrchestrationMode => {
-                self.open_orchestration_mode_popup();
-            }
             SlashCommand::Approvals => {
                 self.open_permissions_popup();
             }
@@ -756,7 +753,6 @@ impl ChatWidget {
             | SlashCommand::Agent
             | SlashCommand::MultiAgents
             | SlashCommand::SubagentConfig
-            | SlashCommand::OrchestrationMode
             | SlashCommand::Approvals
             | SlashCommand::Permissions
             | SlashCommand::ElevateSandbox
