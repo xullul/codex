@@ -69,7 +69,6 @@ use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
 use crate::resume_picker::SessionTarget;
-use crate::subagent_activity::SubagentActivityEvent;
 #[cfg(test)]
 use crate::test_support::PathBufExt;
 #[cfg(test)]

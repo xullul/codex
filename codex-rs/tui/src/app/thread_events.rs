@@ -21,7 +21,6 @@ pub(super) enum ThreadBufferedEvent {
     Request(ServerRequest),
     HistoryEntryResponse(GetHistoryEntryResponseEvent),
     FeedbackSubmission(FeedbackThreadEvent),
-    SubagentActivity(SubagentActivityEvent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,7 +51,6 @@ impl ThreadEventStore {
                 | ThreadBufferedEvent::Notification(ServerNotification::HookStarted(_))
                 | ThreadBufferedEvent::Notification(ServerNotification::HookCompleted(_))
                 | ThreadBufferedEvent::FeedbackSubmission(_)
-                | ThreadBufferedEvent::SubagentActivity(_)
         )
     }
 
@@ -154,8 +152,7 @@ impl ThreadEventStore {
                 ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
-                | ThreadBufferedEvent::FeedbackSubmission(_)
-                | ThreadBufferedEvent::SubagentActivity(_) => None,
+                | ThreadBufferedEvent::FeedbackSubmission(_) => None,
             })
             .collect()
     }
@@ -182,8 +179,7 @@ impl ThreadEventStore {
                 ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
-                | ThreadBufferedEvent::FeedbackSubmission(_)
-                | ThreadBufferedEvent::SubagentActivity(_) => None,
+                | ThreadBufferedEvent::FeedbackSubmission(_) => None,
             })
             .or_else(|| {
                 self.turns
@@ -217,8 +213,7 @@ impl ThreadEventStore {
                         .should_replay_snapshot_request(request),
                     ThreadBufferedEvent::Notification(_)
                     | ThreadBufferedEvent::HistoryEntryResponse(_)
-                    | ThreadBufferedEvent::FeedbackSubmission(_)
-                    | ThreadBufferedEvent::SubagentActivity(_) => true,
+                    | ThreadBufferedEvent::FeedbackSubmission(_) => true,
                 })
                 .cloned()
                 .collect(),

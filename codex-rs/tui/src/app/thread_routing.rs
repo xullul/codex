@@ -884,8 +884,7 @@ impl App {
         } else if let Some(change) = notification_status_change {
             self.apply_side_parent_status_change(thread_id, change);
         }
-        self.mirror_subagent_activity_to_primary(thread_id, &notification)
-            .await?;
+        self.note_subagent_token_usage(thread_id, &notification);
         self.refresh_pending_thread_approvals().await;
         if subagent_activity_changed {
             self.refresh_subagent_activity_panel();
@@ -893,84 +892,18 @@ impl App {
         Ok(())
     }
 
-    async fn mirror_subagent_activity_to_primary(
+    fn note_subagent_token_usage(
         &mut self,
         thread_id: ThreadId,
         notification: &ServerNotification,
-    ) -> Result<()> {
-        let Some(primary_thread_id) = self.primary_thread_id else {
-            return Ok(());
+    ) {
+        if Some(thread_id) == self.primary_thread_id || self.side_threads.contains_key(&thread_id) {
+            return;
         };
-        if thread_id == primary_thread_id || self.side_threads.contains_key(&thread_id) {
-            return Ok(());
+        if let ServerNotification::ThreadTokenUsageUpdated(notification) = notification {
+            self.agent_navigation
+                .set_latest_total_tokens(thread_id, notification.token_usage.total.total_tokens);
         }
-        let Some(entry) = self.agent_navigation.get(&thread_id).cloned() else {
-            return Ok(());
-        };
-
-        if let ServerNotification::ThreadTokenUsageUpdated(notification) = notification
-            && !self
-                .agent_navigation
-                .set_latest_total_tokens(thread_id, notification.token_usage.total.total_tokens)
-        {
-            return Ok(());
-        }
-
-        let Some(activity) = crate::subagent_activity::event_from_notification(
-            thread_id,
-            entry.agent_nickname,
-            entry.agent_role,
-            notification,
-        ) else {
-            return Ok(());
-        };
-
-        self.enqueue_thread_subagent_activity(primary_thread_id, activity)
-            .await
-    }
-
-    async fn enqueue_thread_subagent_activity(
-        &mut self,
-        thread_id: ThreadId,
-        activity: SubagentActivityEvent,
-    ) -> Result<()> {
-        let (sender, store) = {
-            let channel = self.ensure_thread_channel(thread_id);
-            (channel.sender.clone(), Arc::clone(&channel.store))
-        };
-
-        let should_send = {
-            let mut guard = store.lock().await;
-            guard
-                .buffer
-                .push_back(ThreadBufferedEvent::SubagentActivity(activity.clone()));
-            if guard.buffer.len() > guard.capacity
-                && let Some(removed) = guard.buffer.pop_front()
-                && let ThreadBufferedEvent::Request(request) = &removed
-            {
-                guard
-                    .pending_interactive_replay
-                    .note_evicted_server_request(request);
-            }
-            guard.active
-        };
-
-        if should_send {
-            match sender.try_send(ThreadBufferedEvent::SubagentActivity(activity)) {
-                Ok(()) => {}
-                Err(TrySendError::Full(event)) => {
-                    tokio::spawn(async move {
-                        if let Err(err) = sender.send(event).await {
-                            tracing::warn!("thread {thread_id} event channel closed: {err}");
-                        }
-                    });
-                }
-                Err(TrySendError::Closed(_)) => {
-                    tracing::warn!("thread {thread_id} event channel closed");
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Eagerly fetches nickname and role for receiver threads referenced by a collab notification.
@@ -1208,10 +1141,6 @@ impl App {
                 }
                 ThreadBufferedEvent::FeedbackSubmission(event) => {
                     self.enqueue_thread_feedback_event(thread_id, event).await;
-                }
-                ThreadBufferedEvent::SubagentActivity(event) => {
-                    self.enqueue_thread_subagent_activity(thread_id, event)
-                        .await?;
                 }
             }
         }
@@ -1503,10 +1432,6 @@ impl App {
             ThreadBufferedEvent::FeedbackSubmission(event) => {
                 self.handle_feedback_thread_event(event);
             }
-            ThreadBufferedEvent::SubagentActivity(event) => {
-                self.chat_widget
-                    .add_plain_history_lines(crate::subagent_activity::render(event).into_lines());
-            }
         }
         if needs_refresh {
             self.refresh_status_line();
@@ -1530,10 +1455,6 @@ impl App {
             }
             ThreadBufferedEvent::FeedbackSubmission(event) => {
                 self.handle_feedback_thread_event(event);
-            }
-            ThreadBufferedEvent::SubagentActivity(event) => {
-                self.chat_widget
-                    .add_plain_history_lines(crate::subagent_activity::render(event).into_lines());
             }
         }
     }

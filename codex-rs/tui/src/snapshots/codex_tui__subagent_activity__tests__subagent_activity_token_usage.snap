@@ -1,5 +1,0 @@
----
-source: tui/src/subagent_activity.rs
-expression: "render_events(vec![SubagentActivityEvent\n{\n    thread_id, agent_nickname: Some(\"Scout\".to_string()), agent_role:\n    Some(\"explorer\".to_string()), kind: SubagentActivityKind::TokenUsage\n    { total_tokens: 8_400 },\n}])"
----
-• Scout [explorer] token usage: 8.4k total

@@ -182,8 +182,8 @@ mod tests {
             SubagentActivityRow {
                 label: "Huygens [explorer]".to_string(),
                 state: SubagentActivityState::Running,
-                summary: "started command".to_string(),
-                detail: Some("rg -n \"subagent\" codex-rs/tui/src".to_string()),
+                summary: "Search".to_string(),
+                detail: Some("subagent in codex-rs/tui/src".to_string()),
                 token_summary: Some("844K tokens".to_string()),
             },
             SubagentActivityRow {

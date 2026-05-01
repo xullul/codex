@@ -8,6 +8,8 @@ use crate::app_backtrack::BacktrackState;
 use crate::app_backtrack::user_count;
 use crate::app_command::AppCommand;
 
+use crate::bottom_pane::SubagentActivityRow;
+use crate::bottom_pane::SubagentActivityState;
 use crate::chatwidget::ChatWidgetInit;
 use crate::chatwidget::create_initial_user_message;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
@@ -29,6 +31,7 @@ use codex_app_server_protocol::AdditionalFileSystemPermissions;
 use codex_app_server_protocol::AdditionalNetworkPermissions;
 use codex_app_server_protocol::AdditionalPermissionProfile;
 use codex_app_server_protocol::AgentMessageDeltaNotification;
+use codex_app_server_protocol::CommandAction;
 use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
 use codex_app_server_protocol::CommandExecutionSource;
 use codex_app_server_protocol::CommandExecutionStatus;
@@ -1230,8 +1233,8 @@ async fn token_usage_update_refreshes_status_line_with_runtime_context_window() 
 }
 
 #[tokio::test]
-async fn inactive_subagent_activity_is_mirrored_to_primary_thread() -> Result<()> {
-    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+async fn inactive_subagent_activity_stays_in_bottom_pane() -> Result<()> {
+    let mut app = make_test_app().await;
     let primary_thread_id = ThreadId::new();
     let agent_thread_id = ThreadId::new();
     app.enqueue_primary_thread_session(
@@ -1266,7 +1269,11 @@ async fn inactive_subagent_activity_is_mirrored_to_primary_thread() -> Result<()
                 process_id: None,
                 source: CommandExecutionSource::Agent,
                 status: CommandExecutionStatus::InProgress,
-                command_actions: Vec::new(),
+                command_actions: vec![CommandAction::Search {
+                    command: "rg TODO src".to_string(),
+                    query: Some("TODO".to_string()),
+                    path: Some("src".to_string()),
+                }],
                 aggregated_output: None,
                 exit_code: None,
                 duration_ms: None,
@@ -1279,28 +1286,24 @@ async fn inactive_subagent_activity_is_mirrored_to_primary_thread() -> Result<()
         .active_thread_rx
         .as_mut()
         .expect("primary thread receiver should be active");
-    let event = time::timeout(Duration::from_millis(50), rx.recv())
-        .await
-        .expect("timed out waiting for mirrored subagent activity")
-        .expect("channel closed unexpectedly");
-    assert!(matches!(event, ThreadBufferedEvent::SubagentActivity(_)));
-
-    app.handle_thread_event_now(event);
-    let mut rendered = String::new();
-    while let Ok(event) = app_event_rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = event {
-            rendered.push_str(&lines_to_single_string(
-                &cell.transcript_lines(/*width*/ 120),
-            ));
-        }
-    }
-    assert!(rendered.contains("Scout [explorer] started command: rg TODO src"));
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    assert_eq!(
+        app.subagent_activity
+            .rows(Some(primary_thread_id), Some(primary_thread_id)),
+        vec![SubagentActivityRow {
+            label: "Scout [explorer]".to_string(),
+            state: SubagentActivityState::Running,
+            summary: "Search".to_string(),
+            detail: Some("TODO in src".to_string()),
+            token_summary: None,
+        }]
+    );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn subagent_token_usage_is_mirrored_once_per_exact_total() -> Result<()> {
+async fn subagent_token_usage_updates_picker_without_history_event() -> Result<()> {
     let mut app = make_test_app().await;
     let primary_thread_id = ThreadId::new();
     let agent_thread_id = ThreadId::new();
@@ -1347,17 +1350,6 @@ async fn subagent_token_usage_is_mirrored_once_per_exact_total() -> Result<()> {
         .active_thread_rx
         .as_mut()
         .expect("primary thread receiver should be active");
-    let first_event = time::timeout(Duration::from_millis(50), rx.recv())
-        .await
-        .expect("timed out waiting for first token usage activity")
-        .expect("channel closed unexpectedly");
-    assert!(matches!(
-        first_event,
-        ThreadBufferedEvent::SubagentActivity(SubagentActivityEvent {
-            kind: crate::subagent_activity::SubagentActivityKind::TokenUsage { total_tokens: 10 },
-            ..
-        })
-    ));
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     assert_eq!(
         app.agent_navigation

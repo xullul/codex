@@ -548,10 +548,6 @@ impl PlainHistoryCell {
     pub(crate) fn new(lines: Vec<Line<'static>>) -> Self {
         Self { lines }
     }
-
-    pub(crate) fn into_lines(self) -> Vec<Line<'static>> {
-        self.lines
-    }
 }
 
 impl HistoryCell for PlainHistoryCell {

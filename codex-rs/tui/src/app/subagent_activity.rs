@@ -3,13 +3,17 @@
 use super::*;
 use crate::bottom_pane::SubagentActivityRow;
 use crate::bottom_pane::SubagentActivityState;
+use crate::exec_cell::exec_status_summary;
 use crate::status::format_tokens_compact;
 use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
+use codex_app_server_protocol::CommandAction;
+use codex_app_server_protocol::CommandExecutionSource;
 use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::DynamicToolCallStatus;
 use codex_app_server_protocol::McpToolCallStatus;
 use codex_app_server_protocol::PatchApplyStatus;
+use codex_protocol::protocol::ExecCommandSource;
 
 #[derive(Default)]
 pub(super) struct SubagentActivityTracker {
@@ -202,11 +206,12 @@ fn format_token_summary(total_tokens: i64) -> Option<String> {
 
 fn item_started_update(item: &ThreadItem) -> Option<ActivityUpdate> {
     match item {
-        ThreadItem::CommandExecution { command, .. } => Some(ActivityUpdate {
-            state: SubagentActivityState::Running,
-            summary: "started command".to_string(),
-            detail: Some(command.clone()),
-        }),
+        ThreadItem::CommandExecution {
+            command,
+            source,
+            command_actions,
+            ..
+        } => Some(command_activity_update(command, *source, command_actions)),
         ThreadItem::FileChange { changes, .. } => Some(ActivityUpdate {
             state: SubagentActivityState::Running,
             summary: "editing files".to_string(),
@@ -263,11 +268,12 @@ fn item_completed_update(item: &ThreadItem) -> Option<ActivityUpdate> {
             command,
             status,
             exit_code,
+            source,
+            command_actions,
             ..
         } => Some(ActivityUpdate {
             state: SubagentActivityState::Running,
-            summary: command_status_summary(status, *exit_code),
-            detail: Some(command.clone()),
+            ..command_completed_update(command, *source, command_actions, status, *exit_code)
         }),
         ThreadItem::FileChange {
             changes, status, ..
@@ -364,12 +370,81 @@ fn turn_completed_update(
 
 fn command_status_summary(status: &CommandExecutionStatus, exit_code: Option<i32>) -> String {
     match (status, exit_code) {
+        (CommandExecutionStatus::Completed, Some(0) | None) => "finished command".to_string(),
         (CommandExecutionStatus::Completed, Some(code)) => format!("finished command ({code})"),
-        (CommandExecutionStatus::Completed, None) => "finished command".to_string(),
         (CommandExecutionStatus::Failed, Some(code)) => format!("command failed ({code})"),
         (CommandExecutionStatus::Failed, None) => "command failed".to_string(),
         (CommandExecutionStatus::Declined, _) => "command declined".to_string(),
         (CommandExecutionStatus::InProgress, _) => "running command".to_string(),
+    }
+}
+
+fn command_activity_update(
+    command: &str,
+    source: CommandExecutionSource,
+    command_actions: &[CommandAction],
+) -> ActivityUpdate {
+    let status = semantic_command_status(command, source, command_actions);
+    ActivityUpdate {
+        state: SubagentActivityState::Running,
+        summary: status.header,
+        detail: status.details,
+    }
+}
+
+fn command_completed_update(
+    command: &str,
+    source: CommandExecutionSource,
+    command_actions: &[CommandAction],
+    status: &CommandExecutionStatus,
+    exit_code: Option<i32>,
+) -> ActivityUpdate {
+    let semantic_status = semantic_command_status(command, source, command_actions);
+    if command_actions
+        .iter()
+        .any(|action| !matches!(action, CommandAction::Unknown { .. }))
+        && matches!(status, CommandExecutionStatus::Completed)
+    {
+        return ActivityUpdate {
+            state: SubagentActivityState::Running,
+            summary: semantic_status.header,
+            detail: semantic_status.details,
+        };
+    }
+
+    ActivityUpdate {
+        state: SubagentActivityState::Running,
+        summary: command_status_summary(status, exit_code),
+        detail: semantic_status
+            .details
+            .or_else(|| Some(command.to_string())),
+    }
+}
+
+fn semantic_command_status(
+    command: &str,
+    source: CommandExecutionSource,
+    command_actions: &[CommandAction],
+) -> crate::exec_cell::ExecStatusSummary {
+    let parsed = command_actions
+        .iter()
+        .cloned()
+        .map(CommandAction::into_core)
+        .collect::<Vec<_>>();
+    exec_status_summary(
+        &[command.to_string()],
+        &parsed,
+        command_source_to_core(source),
+        /*interaction_input*/ None,
+    )
+}
+
+fn command_source_to_core(source: CommandExecutionSource) -> ExecCommandSource {
+    match source {
+        CommandExecutionSource::Agent => ExecCommandSource::Agent,
+        CommandExecutionSource::UserShell => ExecCommandSource::UserShell,
+        CommandExecutionSource::UnifiedExecStartup => ExecCommandSource::UnifiedExecStartup,
+        CommandExecutionSource::UnifiedExecInteraction => ExecCommandSource::UnifiedExecInteraction,
     }
 }
 
@@ -506,7 +581,11 @@ mod tests {
             process_id: None,
             source: codex_app_server_protocol::CommandExecutionSource::Agent,
             status,
-            command_actions: Vec::new(),
+            command_actions: vec![CommandAction::Search {
+                command: command.to_string(),
+                query: Some("subagent".to_string()),
+                path: Some("codex-rs/tui/src".to_string()),
+            }],
             aggregated_output: None,
             exit_code: None,
             duration_ms: None,
@@ -580,8 +659,8 @@ mod tests {
             vec![SubagentActivityRow {
                 label: "Huygens [explorer]".to_string(),
                 state: SubagentActivityState::Running,
-                summary: "finished command".to_string(),
-                detail: Some("rg -n \"subagent\" codex-rs/tui/src".to_string()),
+                summary: "Search".to_string(),
+                detail: Some("subagent in codex-rs/tui/src".to_string()),
                 token_summary: Some("844K tokens".to_string()),
             }]
         );
