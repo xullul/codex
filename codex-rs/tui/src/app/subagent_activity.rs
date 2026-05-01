@@ -89,14 +89,19 @@ impl SubagentActivityTracker {
                     false
                 }
             }
-            ServerNotification::TurnCompleted(notification) => self.upsert(
-                thread_id,
-                label,
-                turn_completed_update(
-                    notification.turn.status.clone(),
-                    notification.turn.error.as_ref(),
-                ),
-            ),
+            ServerNotification::TurnCompleted(notification)
+                if matches!(notification.turn.status, TurnStatus::InProgress) =>
+            {
+                self.upsert(
+                    thread_id,
+                    label,
+                    turn_completed_update(
+                        notification.turn.status.clone(),
+                        notification.turn.error.as_ref(),
+                    ),
+                )
+            }
+            ServerNotification::TurnCompleted(_) => self.remove(thread_id),
             ServerNotification::ThreadClosed(_) => self.remove(thread_id),
             _ => false,
         }
@@ -606,5 +611,52 @@ mod tests {
         );
 
         assert_eq!(tracker.rows(Some(agent_id), Some(primary_id)), Vec::new());
+    }
+
+    #[test]
+    fn terminal_subagent_turn_removes_activity_row() {
+        let mut tracker = SubagentActivityTracker::default();
+        let primary_id = thread_id(1);
+        let agent_id = thread_id(2);
+
+        tracker.note_notification(
+            agent_id,
+            "Huygens [explorer]".to_string(),
+            &ServerNotification::TurnStarted(codex_app_server_protocol::TurnStartedNotification {
+                thread_id: agent_id.to_string(),
+                turn: Turn {
+                    id: "turn-1".to_string(),
+                    items: Vec::new(),
+                    status: TurnStatus::InProgress,
+                    error: None,
+                    started_at: None,
+                    completed_at: None,
+                    duration_ms: None,
+                },
+            }),
+        );
+
+        assert!(!tracker.rows(Some(primary_id), Some(primary_id)).is_empty());
+
+        tracker.note_notification(
+            agent_id,
+            "Huygens [explorer]".to_string(),
+            &ServerNotification::TurnCompleted(
+                codex_app_server_protocol::TurnCompletedNotification {
+                    thread_id: agent_id.to_string(),
+                    turn: Turn {
+                        id: "turn-1".to_string(),
+                        items: Vec::new(),
+                        status: TurnStatus::Completed,
+                        error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
+                    },
+                },
+            ),
+        );
+
+        assert_eq!(tracker.rows(Some(primary_id), Some(primary_id)), Vec::new());
     }
 }
