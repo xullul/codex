@@ -59,6 +59,8 @@ use crate::bottom_pane::StatusSurfacePreviewItem;
 use crate::bottom_pane::SubagentActivityRow;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
+use crate::bottom_pane::WorkStatePlanItem;
+use crate::bottom_pane::WorkStateSnapshot;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
@@ -883,6 +885,11 @@ pub(crate) struct ChatWidget {
     /// This is cached only for the approval popup. It is reset at the start of each new task so the
     /// fresh-context action cannot accidentally submit an older plan after a later turn begins.
     latest_proposed_plan_markdown: Option<String>,
+    /// Raw markdown of the most recent proposed plan for the inspectable work-state panel.
+    latest_work_state_proposed_plan_markdown: Option<String>,
+    /// Latest `update_plan` snapshot for the inspectable work-state panel.
+    latest_work_state_checklist: Vec<WorkStatePlanItem>,
+    latest_work_state_subagents: Vec<SubagentActivityRow>,
     /// Whether this turn already produced a copyable response.
     ///
     /// `TurnComplete.last_agent_message` is a fallback source: use it only when no earlier
@@ -1249,6 +1256,9 @@ pub(crate) struct ThreadInputState {
     active_collaboration_mask: Option<CollaborationModeMask>,
     task_running: bool,
     agent_turn_running: bool,
+    latest_work_state_proposed_plan_markdown: Option<String>,
+    latest_work_state_checklist: Vec<WorkStatePlanItem>,
+    latest_work_state_subagents: Vec<SubagentActivityRow>,
 }
 
 impl From<String> for UserMessage {
@@ -2304,6 +2314,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_subagent_activity(&mut self, rows: Vec<SubagentActivityRow>) {
+        self.latest_work_state_subagents = rows.clone();
         self.bottom_pane.set_subagent_activity(rows);
     }
 
@@ -2799,6 +2810,7 @@ impl ChatWidget {
         if !plan_text.trim().is_empty() {
             self.record_agent_markdown(&plan_text);
             self.latest_proposed_plan_markdown = Some(plan_text.clone());
+            self.latest_work_state_proposed_plan_markdown = Some(plan_text.clone());
         }
         // Plan commit ticks can hide the status row; remember whether we streamed plan output so
         // completion can restore it once stream queues are idle.
@@ -3970,6 +3982,11 @@ impl ChatWidget {
             active_collaboration_mask: self.active_collaboration_mask.clone(),
             task_running: self.bottom_pane.is_task_running(),
             agent_turn_running: self.agent_turn_running,
+            latest_work_state_proposed_plan_markdown: self
+                .latest_work_state_proposed_plan_markdown
+                .clone(),
+            latest_work_state_checklist: self.latest_work_state_checklist.clone(),
+            latest_work_state_subagents: self.latest_work_state_subagents.clone(),
         })
     }
 
@@ -3978,6 +3995,10 @@ impl ChatWidget {
         if let Some(input_state) = input_state {
             self.current_collaboration_mode = input_state.current_collaboration_mode;
             self.active_collaboration_mask = input_state.active_collaboration_mask;
+            self.latest_work_state_proposed_plan_markdown =
+                input_state.latest_work_state_proposed_plan_markdown;
+            self.latest_work_state_checklist = input_state.latest_work_state_checklist;
+            self.latest_work_state_subagents = input_state.latest_work_state_subagents;
             self.agent_turn_running = input_state.agent_turn_running;
             self.goal_status_active_turn_started_at =
                 self.agent_turn_running.then_some(Instant::now());
@@ -4058,6 +4079,9 @@ impl ChatWidget {
             self.bottom_pane.set_composer_pending_pastes(Vec::new());
             self.queued_user_messages.clear();
             self.queued_user_message_history_records.clear();
+            self.latest_work_state_proposed_plan_markdown = None;
+            self.latest_work_state_checklist.clear();
+            self.latest_work_state_subagents.clear();
         }
         self.turn_sleep_inhibitor
             .set_turn_running(self.agent_turn_running);
@@ -4065,6 +4089,18 @@ impl ChatWidget {
         if restored_task_running && !self.bottom_pane.is_task_running() {
             self.bottom_pane.set_task_running(/*running*/ true);
             self.refresh_status_surfaces();
+        }
+        if restored_task_running && !self.latest_work_state_checklist.is_empty() {
+            self.bottom_pane.set_plan_checklist(
+                self.latest_work_state_checklist
+                    .iter()
+                    .map(WorkStatePlanItem::to_plan_item_arg)
+                    .collect(),
+            );
+        }
+        if restored_task_running && !self.latest_work_state_subagents.is_empty() {
+            self.bottom_pane
+                .set_subagent_activity(self.latest_work_state_subagents.clone());
         }
         self.refresh_pending_input_preview();
         self.request_redraw();
@@ -4086,6 +4122,8 @@ impl ChatWidget {
             })
             .count();
         self.last_plan_progress = (total > 0).then_some((completed, total));
+        self.latest_work_state_checklist =
+            update.plan.iter().map(WorkStatePlanItem::from).collect();
         self.bottom_pane.set_plan_checklist(update.plan.clone());
         self.refresh_status_surfaces();
         self.add_to_history(history_cell::new_plan_update(update));
@@ -5718,6 +5756,9 @@ impl ChatWidget {
             visible_user_turn_count: 0,
             copy_history_evicted_by_rollback: false,
             latest_proposed_plan_markdown: None,
+            latest_work_state_proposed_plan_markdown: None,
+            latest_work_state_checklist: Vec::new(),
+            latest_work_state_subagents: Vec::new(),
             saw_copy_source_this_turn: false,
             mcp_startup_expected_servers: None,
             mcp_startup_ignore_updates_until_next_start: false,
@@ -8274,6 +8315,15 @@ impl ChatWidget {
 
     /// Rebuild and update the bottom-pane pending-input preview.
     fn refresh_pending_input_preview(&mut self) {
+        let (queued_messages, pending_steers, rejected_steers) = self.pending_input_preview_texts();
+        self.bottom_pane.set_pending_input_preview(
+            queued_messages,
+            pending_steers,
+            rejected_steers,
+        );
+    }
+
+    fn pending_input_preview_texts(&self) -> (Vec<String>, Vec<String>, Vec<String>) {
         let queued_messages: Vec<String> = self
             .queued_user_messages
             .iter()
@@ -8300,11 +8350,21 @@ impl ChatWidget {
                 user_message_preview_text(message, self.rejected_steer_history_records.get(idx))
             })
             .collect();
-        self.bottom_pane.set_pending_input_preview(
+        (queued_messages, pending_steers, rejected_steers)
+    }
+
+    fn open_work_state_view(&mut self) {
+        let (queued_messages, pending_steers, rejected_steers) = self.pending_input_preview_texts();
+        self.bottom_pane.show_work_state_view(WorkStateSnapshot {
+            proposed_plan_markdown: self.latest_work_state_proposed_plan_markdown.clone(),
+            checklist: self.latest_work_state_checklist.clone(),
             queued_messages,
             pending_steers,
             rejected_steers,
-        );
+            subagents: self.latest_work_state_subagents.clone(),
+            background_summary: self.bottom_pane.background_terminal_summary(),
+        });
+        self.request_redraw();
     }
 
     pub(crate) fn set_pending_thread_approvals(&mut self, threads: Vec<String>) {

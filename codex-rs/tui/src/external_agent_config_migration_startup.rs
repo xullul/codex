@@ -372,6 +372,78 @@ pub(crate) async fn handle_external_agent_config_migration_prompt_if_needed(
     }
 }
 
+pub(crate) async fn handle_external_agent_config_migration_prompt_on_demand(
+    tui: &mut tui::Tui,
+    app_server: &mut AppServerSession,
+    config: &mut Config,
+    cli_kv_overrides: &[(String, TomlValue)],
+    harness_overrides: &ConfigOverrides,
+) -> Result<Option<String>> {
+    if !config.features.enabled(Feature::ExternalMigration) {
+        return Ok(Some(
+            "External agent migration is disabled by the current feature configuration."
+                .to_string(),
+        ));
+    }
+
+    let detected_items = app_server
+        .external_agent_config_detect(ExternalAgentConfigDetectParams {
+            include_home: true,
+            cwds: Some(vec![config.cwd.to_path_buf()]),
+        })
+        .await?
+        .items;
+
+    if detected_items.is_empty() {
+        return Ok(Some(
+            "No Claude Code settings or project files were found to import.".to_string(),
+        ));
+    }
+
+    let mut selected_items = detected_items.clone();
+    let mut error: Option<String> = None;
+
+    loop {
+        match run_external_agent_config_migration_prompt(
+            tui,
+            &detected_items,
+            &selected_items,
+            error.as_deref(),
+        )
+        .await
+        {
+            ExternalAgentConfigMigrationOutcome::Proceed(items) => {
+                selected_items = items.clone();
+                match app_server.external_agent_config_import(items).await {
+                    Ok(_) => {
+                        let success_message =
+                            external_agent_config_migration_success_message(&selected_items);
+                        *config = ConfigBuilder::default()
+                            .codex_home(config.codex_home.to_path_buf())
+                            .cli_overrides(cli_kv_overrides.to_vec())
+                            .harness_overrides(harness_overrides.clone())
+                            .build()
+                            .await
+                            .wrap_err("Failed to reload config after external agent migration")?;
+                        return Ok(Some(success_message));
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            cwd = %config.cwd.display(),
+                            "failed to import external agent config migration items"
+                        );
+                        error = Some(format!("Migration failed: {err}"));
+                    }
+                }
+            }
+            ExternalAgentConfigMigrationOutcome::Skip
+            | ExternalAgentConfigMigrationOutcome::SkipForever => return Ok(None),
+            ExternalAgentConfigMigrationOutcome::Exit => return Ok(None),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

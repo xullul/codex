@@ -34,6 +34,7 @@ pub enum SlashCommand {
     Init,
     Compact,
     Plan,
+    Work,
     Goal,
     Collab,
     Agent,
@@ -57,6 +58,8 @@ pub enum SlashCommand {
     Mcp,
     Apps,
     Plugins,
+    #[strum(to_string = "migrate", serialize = "claude")]
+    ExternalAgentMigration,
     Logout,
     Quit,
     Exit,
@@ -115,6 +118,7 @@ impl SlashCommand {
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
+            SlashCommand::Work => "show current plan, checklist, queue, and background work",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
@@ -133,6 +137,7 @@ impl SlashCommand {
             SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
             SlashCommand::Apps => "manage apps",
             SlashCommand::Plugins => "browse plugins",
+            SlashCommand::ExternalAgentMigration => "import Claude Code settings and project files",
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
@@ -190,6 +195,7 @@ impl SlashCommand {
             | SlashCommand::Memories
             | SlashCommand::Review
             | SlashCommand::Plan
+            | SlashCommand::ExternalAgentMigration
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
@@ -204,6 +210,7 @@ impl SlashCommand {
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::Goal
+            | SlashCommand::Work
             | SlashCommand::Mcp
             | SlashCommand::Apps
             | SlashCommand::Plugins

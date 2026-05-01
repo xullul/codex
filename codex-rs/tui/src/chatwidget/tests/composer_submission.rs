@@ -930,6 +930,9 @@ async fn restore_thread_input_state_syncs_sleep_inhibitor_state() {
         active_collaboration_mask: chat.active_collaboration_mask.clone(),
         task_running: true,
         agent_turn_running: true,
+        latest_work_state_proposed_plan_markdown: None,
+        latest_work_state_checklist: Vec::new(),
+        latest_work_state_subagents: Vec::new(),
     }));
 
     assert!(chat.agent_turn_running);

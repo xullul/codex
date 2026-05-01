@@ -35,6 +35,7 @@ use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::external_agent_config_migration_startup::ExternalAgentConfigMigrationStartupOutcome;
 use crate::external_agent_config_migration_startup::handle_external_agent_config_migration_prompt_if_needed;
+use crate::external_agent_config_migration_startup::handle_external_agent_config_migration_prompt_on_demand;
 use crate::external_editor;
 use crate::file_search::FileSearchManager;
 use crate::history_cell;

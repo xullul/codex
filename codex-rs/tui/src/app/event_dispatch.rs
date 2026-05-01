@@ -1523,6 +1523,23 @@ impl App {
             AppEvent::OpenOrchestrationModeConfig => {
                 self.chat_widget.open_orchestration_mode_popup();
             }
+            AppEvent::OpenExternalAgentConfigMigration => {
+                match handle_external_agent_config_migration_prompt_on_demand(
+                    tui,
+                    app_server,
+                    &mut self.config,
+                    &self.cli_kv_overrides,
+                    &self.harness_overrides,
+                )
+                .await
+                {
+                    Ok(Some(message)) => self.chat_widget.add_info_message(message, None),
+                    Ok(None) => {}
+                    Err(err) => self
+                        .chat_widget
+                        .add_error_message(format!("External agent migration failed: {err}")),
+                }
+            }
             AppEvent::SelectAgentThread(thread_id) => {
                 self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                     .await?;

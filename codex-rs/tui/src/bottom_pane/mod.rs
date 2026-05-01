@@ -24,6 +24,7 @@ use crate::bottom_pane::pending_thread_approvals::PendingThreadApprovals;
 use crate::bottom_pane::plan_checklist::PlanChecklist;
 use crate::bottom_pane::subagent_activity::SubagentActivity;
 use crate::bottom_pane::unified_exec_footer::UnifiedExecFooter;
+use crate::bottom_pane::work_state_view::WorkStateView;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::keymap::RuntimeKeymap;
@@ -131,6 +132,8 @@ pub(crate) use title_setup::TerminalTitleItem;
 pub(crate) use title_setup::TerminalTitleSetupView;
 #[cfg(test)]
 pub(crate) use title_setup::preview_line_for_title_items;
+pub(crate) use work_state_view::WorkStatePlanItem;
+pub(crate) use work_state_view::WorkStateSnapshot;
 mod paste_burst;
 mod pending_input_preview;
 mod pending_thread_approvals;
@@ -142,6 +145,7 @@ mod selection_tabs;
 mod subagent_activity;
 mod textarea;
 mod unified_exec_footer;
+mod work_state_view;
 pub(crate) use feedback_view::FeedbackNoteView;
 pub(crate) use selection_tabs::SelectionTab;
 
@@ -1140,6 +1144,14 @@ impl BottomPane {
     pub(crate) fn clear_subagent_activity(&mut self) {
         self.subagent_activity.clear();
         self.request_redraw();
+    }
+
+    pub(crate) fn show_work_state_view(&mut self, snapshot: WorkStateSnapshot) {
+        self.push_view(Box::new(WorkStateView::new(snapshot)));
+    }
+
+    pub(crate) fn background_terminal_summary(&self) -> Option<String> {
+        self.unified_exec_footer.summary_text()
     }
 
     /// Copy unified-exec summary text into the active status row, if any.

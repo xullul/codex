@@ -207,6 +207,9 @@ impl ChatWidget {
             SlashCommand::Plan => {
                 self.apply_plan_slash_command();
             }
+            SlashCommand::Work => {
+                self.open_work_state_view();
+            }
             SlashCommand::Goal => {
                 if !self.config.features.enabled(Feature::Goals) {
                     return;
@@ -395,6 +398,10 @@ impl ChatWidget {
             }
             SlashCommand::Plugins => {
                 self.add_plugins_output();
+            }
+            SlashCommand::ExternalAgentMigration => {
+                self.app_event_tx
+                    .send(AppEvent::OpenExternalAgentConfigMigration);
             }
             SlashCommand::Rollout => {
                 if let Some(path) = self.rollout_path() {
@@ -838,6 +845,7 @@ impl ChatWidget {
             SlashCommand::Fast
             | SlashCommand::Status
             | SlashCommand::DebugConfig
+            | SlashCommand::Work
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::MemoryDrop
@@ -845,6 +853,7 @@ impl ChatWidget {
             | SlashCommand::Mcp
             | SlashCommand::Apps
             | SlashCommand::Plugins
+            | SlashCommand::ExternalAgentMigration
             | SlashCommand::Rollout
             | SlashCommand::Copy
             | SlashCommand::Diff

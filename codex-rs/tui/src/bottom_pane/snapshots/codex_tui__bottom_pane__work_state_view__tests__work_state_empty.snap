@@ -1,0 +1,22 @@
+---
+source: tui/src/bottom_pane/work_state_view.rs
+assertion_line: 372
+expression: "render(&view, 60)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 60, height: 3 },
+    content: [
+        "> Work state  esc close                                     ",
+        "                                                            ",
+        "  No active or recent work state for this thread.           ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 12, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 14, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 23, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 49, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

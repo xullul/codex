@@ -126,6 +126,8 @@ pub(crate) enum AppEvent {
     OpenSubagentExplorationConfig,
     /// Open the orchestration mode popup.
     OpenOrchestrationModeConfig,
+    /// Open the external-agent config migration prompt on demand.
+    OpenExternalAgentConfigMigration,
     /// Switch the active thread to the selected agent.
     SelectAgentThread(ThreadId),
 
