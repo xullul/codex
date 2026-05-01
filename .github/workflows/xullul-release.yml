@@ -24,7 +24,7 @@ jobs:
   windows-x64:
     name: Build Windows x64 release
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: codex-rs
