@@ -121,6 +121,37 @@ async fn apply_explorer_role_adds_developer_instructions_and_preserves_model_and
 }
 
 #[tokio::test]
+async fn apply_plan_role_adds_developer_instructions_and_preserves_model_and_reasoning_effort() {
+    let (_home, mut config) = test_config_with_cli_overrides(vec![
+        (
+            "model".to_string(),
+            TomlValue::String("gpt-5.4".to_string()),
+        ),
+        (
+            "model_reasoning_effort".to_string(),
+            TomlValue::String("medium".to_string()),
+        ),
+    ])
+    .await;
+    let before_layers = session_flags_layer_count(&config);
+
+    apply_role_to_config(&mut config, Some("plan"))
+        .await
+        .expect("plan role should apply");
+
+    assert_eq!(config.model.as_deref(), Some("gpt-5.4"));
+    assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::Medium));
+    assert!(
+        config
+            .developer_instructions
+            .as_deref()
+            .is_some_and(|instructions| instructions
+                .contains("You are a plan subagent for implementation design."))
+    );
+    assert_eq!(session_flags_layer_count(&config), before_layers + 1);
+}
+
+#[tokio::test]
 async fn apply_role_returns_unavailable_for_missing_user_role_file() {
     let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
     config.agent_roles.insert(
@@ -707,6 +738,7 @@ fn spawn_tool_spec_build_deduplicates_user_defined_built_in_roles() {
 
     assert!(spec.contains("researcher: no description"));
     assert!(spec.contains("explorer: {\nuser override\n}"));
+    assert!(spec.contains("plan: {"));
     assert!(spec.contains("default: {\nDefault agent.\n}"));
     assert!(!spec.contains("Explorers are fast and authoritative."));
 }
@@ -782,9 +814,17 @@ fn spawn_tool_spec_marks_role_locked_reasoning_effort_only() {
 }
 
 #[test]
-fn built_in_config_file_contents_resolves_explorer_only() {
+fn built_in_config_file_contents_resolves_known_built_ins() {
     assert_eq!(
         built_in::config_file_contents(Path::new("missing.toml")),
         None
+    );
+    assert!(
+        built_in::config_file_contents(Path::new("explorer.toml"))
+            .is_some_and(|contents| contents.contains("explorer subagent"))
+    );
+    assert!(
+        built_in::config_file_contents(Path::new("plan.toml"))
+            .is_some_and(|contents| contents.contains("plan subagent"))
     );
 }

@@ -379,6 +379,21 @@ Rules:
                     }
                 ),
                 (
+                    "plan".to_string(),
+                    AgentRoleConfig {
+                        description: Some(r#"Use `plan` for implementation design before editing.
+Plan agents are read-only planning specialists inspired by Claude Code's built-in Plan subagent.
+They are useful when a task needs architecture discovery, sequencing, tradeoff analysis, or a concrete implementation plan before code changes.
+Rules:
+- Give the plan agent a focused task and any constraints it must honor.
+- Use plan agents for research and design only; do not ask them to edit files, run formatters, stage changes, commit, or push.
+- Expect the result to include critical files, existing patterns, likely tests, risks, and blockers.
+- Integrate the returned plan yourself before implementation; do not delegate the immediate critical-path edit if you are blocked on the plan result."#.to_string()),
+                        config_file: Some("plan.toml".to_string().parse().unwrap_or_default()),
+                        nickname_candidates: None,
+                    }
+                ),
+                (
                     "worker".to_string(),
                     AgentRoleConfig {
                         description: Some(r#"Use for execution and production work.
@@ -419,9 +434,11 @@ Rules:
     /// Resolves a built-in role `config_file` path to embedded content.
     pub(super) fn config_file_contents(path: &Path) -> Option<&'static str> {
         const EXPLORER: &str = include_str!("builtins/explorer.toml");
+        const PLAN: &str = include_str!("builtins/plan.toml");
         const AWAITER: &str = include_str!("builtins/awaiter.toml");
         match path.to_str()? {
             "explorer.toml" => Some(EXPLORER),
+            "plan.toml" => Some(PLAN),
             "awaiter.toml" => Some(AWAITER),
             _ => None,
         }
