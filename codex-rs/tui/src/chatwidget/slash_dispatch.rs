@@ -237,6 +237,9 @@ impl ChatWidget {
             SlashCommand::Side => {
                 self.request_empty_side_conversation();
             }
+            SlashCommand::Btw => {
+                self.add_error_message("Usage: /btw <question>".to_string());
+            }
             SlashCommand::Agent | SlashCommand::MultiAgents => {
                 self.app_event_tx.send(AppEvent::OpenAgentPicker);
             }
@@ -714,6 +717,23 @@ impl ChatWidget {
                 );
                 self.request_side_conversation(parent_thread_id, Some(user_message));
             }
+            SlashCommand::Btw if !trimmed.is_empty() => {
+                let Some(parent_thread_id) = self.thread_id else {
+                    self.add_error_message(
+                        "'/btw' is unavailable before the session starts.".to_string(),
+                    );
+                    return;
+                };
+                let user_message = self.prepared_inline_user_message(
+                    args,
+                    text_elements,
+                    local_images,
+                    remote_image_urls,
+                    mention_bindings,
+                    source,
+                );
+                self.request_side_conversation(parent_thread_id, Some(user_message));
+            }
             SlashCommand::Review if !trimmed.is_empty() => {
                 self.submit_op(AppCommand::review(ReviewRequest {
                     target: ReviewTarget::Custom { instructions: args },
@@ -873,6 +893,7 @@ impl ChatWidget {
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal
+            | SlashCommand::Btw
             | SlashCommand::Collab
             | SlashCommand::Side
             | SlashCommand::Keymap
@@ -935,7 +956,7 @@ impl ChatWidget {
     }
 
     fn ensure_side_command_allowed_outside_review(&mut self, cmd: SlashCommand) -> bool {
-        if cmd != SlashCommand::Side || !self.is_review_mode {
+        if !matches!(cmd, SlashCommand::Side | SlashCommand::Btw) || !self.is_review_mode {
             return true;
         }
 

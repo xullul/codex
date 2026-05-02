@@ -46,6 +46,7 @@ pub enum SlashCommand {
     )]
     SubagentConfig,
     Side,
+    Btw,
     // Undo,
     Copy,
     Diff,
@@ -124,6 +125,7 @@ impl SlashCommand {
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::SubagentConfig => "configure subagent delegation preferences",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
+            SlashCommand::Btw => "ask a quick side question without adding to the main chat",
             SlashCommand::Approvals => "choose what Codex is allowed to do",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
             SlashCommand::Keymap => "remap TUI shortcuts",
@@ -161,6 +163,7 @@ impl SlashCommand {
                 | SlashCommand::Fast
                 | SlashCommand::Mcp
                 | SlashCommand::Side
+                | SlashCommand::Btw
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
         )
@@ -221,6 +224,7 @@ impl SlashCommand {
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Side => true,
+            SlashCommand::Btw => true,
             SlashCommand::SubagentConfig => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
@@ -301,6 +305,13 @@ mod tests {
         assert!(SlashCommand::Goal.available_during_task());
         assert!(SlashCommand::Title.available_during_task());
         assert!(SlashCommand::Statusline.available_during_task());
+        assert!(SlashCommand::Btw.available_during_task());
+    }
+
+    #[test]
+    fn btw_command_accepts_inline_args() {
+        assert_eq!(SlashCommand::from_str("btw"), Ok(SlashCommand::Btw));
+        assert!(SlashCommand::Btw.supports_inline_args());
     }
 
     #[test]

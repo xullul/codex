@@ -174,6 +174,62 @@ async fn slash_side_is_rejected_during_review_mode() {
 }
 
 #[tokio::test]
+async fn slash_btw_without_args_reports_usage() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Btw);
+
+    let event = rx.try_recv().expect("expected /btw usage error");
+    match event {
+        AppEvent::InsertHistoryCell(cell) => {
+            let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+            assert!(
+                rendered.contains("Usage: /btw <question>"),
+                "expected /btw usage error, got {rendered:?}"
+            );
+        }
+        other => panic!("expected InsertHistoryCell error, got {other:?}"),
+    }
+    assert!(rx.try_recv().is_err(), "expected no follow-up events");
+    assert!(op_rx.try_recv().is_err(), "expected no submitted op");
+}
+
+#[tokio::test]
+async fn slash_btw_requests_forked_side_question_while_task_running() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let parent_thread_id = ThreadId::new();
+    chat.thread_id = Some(parent_thread_id);
+    chat.on_task_started();
+    chat.bottom_pane.set_composer_text(
+        "/btw summarize the risk".to_string(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::StartSide {
+            parent_thread_id: emitted_parent_thread_id,
+            user_message: Some(user_message),
+        }) if emitted_parent_thread_id == parent_thread_id
+            && user_message
+                == UserMessage {
+                    text: "summarize the risk".to_string(),
+                    local_images: Vec::new(),
+                    remote_image_urls: Vec::new(),
+                    text_elements: Vec::new(),
+                    mention_bindings: Vec::new(),
+                }
+    );
+    assert!(
+        op_rx.try_recv().is_err(),
+        "expected no op on the parent thread"
+    );
+}
+
+#[tokio::test]
 async fn submit_user_message_as_plain_user_turn_does_not_run_shell_commands() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
