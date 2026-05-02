@@ -45,7 +45,8 @@ pub fn create_create_goal_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: CREATE_GOAL_TOOL_NAME.to_string(),
         description: format!(
-            r#"Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.
+            r#"Create a goal for a durable, multi-step execution objective when the user explicitly requests a goal, system/developer instructions ask for one, or the current user task clearly needs the agent to preserve original intent across turns, compaction, or resume.
+Do not create goals for quick Q&A, planning-only discussion, control-only turns, or ordinary one-shot tasks.
 Set token_budget only when an explicit token budget is requested. Fails if a goal exists; use {UPDATE_GOAL_TOOL_NAME} only for status."#
         ),
         strict: false,

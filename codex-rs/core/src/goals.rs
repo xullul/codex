@@ -15,6 +15,7 @@ use codex_features::Feature;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
@@ -36,6 +37,7 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
+use tracing::warn;
 
 pub(crate) struct SetGoalRequest {
     pub(crate) objective: Option<String>,
@@ -53,6 +55,14 @@ static CONTINUATION_PROMPT_TEMPLATE: LazyLock<Template> =
         || match Template::parse(include_str!("../templates/goals/continuation.md")) {
             Ok(template) => template,
             Err(err) => panic!("embedded goals/continuation.md template is invalid: {err}"),
+        },
+    );
+
+static ACTIVE_PROMPT_TEMPLATE: LazyLock<Template> =
+    LazyLock::new(
+        || match Template::parse(include_str!("../templates/goals/active.md")) {
+            Ok(template) => template,
+            Err(err) => panic!("embedded goals/active.md template is invalid: {err}"),
         },
     );
 
@@ -1314,6 +1324,43 @@ impl Session {
 }
 
 impl Session {
+    pub(crate) async fn thread_goal_context_item(&self, mode: ModeKind) -> Option<ResponseItem> {
+        if !self.features().enabled(Feature::Goals) || should_ignore_goal_for_mode(mode) {
+            return None;
+        }
+
+        let state_db = match self.state_db_for_thread_goals().await {
+            Ok(Some(state_db)) => state_db,
+            Ok(None) => return None,
+            Err(err) => {
+                warn!("failed to load thread goal for model context: {err:#}");
+                return None;
+            }
+        };
+
+        let goal = match state_db.get_thread_goal(self.conversation_id).await {
+            Ok(Some(goal)) => protocol_goal_from_state(goal),
+            Ok(None) => return None,
+            Err(err) => {
+                warn!("failed to read thread goal for model context: {err:#}");
+                return None;
+            }
+        };
+
+        let text = match goal.status {
+            ThreadGoalStatus::Active => active_prompt(&goal),
+            ThreadGoalStatus::BudgetLimited => budget_limit_prompt(&goal),
+            ThreadGoalStatus::Paused | ThreadGoalStatus::Complete => inactive_prompt(&goal),
+        };
+
+        Some(ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText { text }],
+            phase: None,
+        })
+    }
+
     async fn state_db_for_thread_goals(&self) -> anyhow::Result<Option<StateDbHandle>> {
         let config = self.get_config().await;
         if config.ephemeral {
@@ -1396,6 +1443,27 @@ fn should_ignore_goal_for_mode(mode: ModeKind) -> bool {
 // reported as context, but the model is only asked to mark goals active,
 // paused, or complete.
 fn continuation_prompt(goal: &ThreadGoal) -> String {
+    render_goal_prompt(goal, &CONTINUATION_PROMPT_TEMPLATE, "goals/continuation.md")
+}
+
+fn active_prompt(goal: &ThreadGoal) -> String {
+    render_goal_prompt(goal, &ACTIVE_PROMPT_TEMPLATE, "goals/active.md")
+}
+
+fn inactive_prompt(goal: &ThreadGoal) -> String {
+    let status = match goal.status {
+        ThreadGoalStatus::Paused => "paused",
+        ThreadGoalStatus::Complete => "complete",
+        ThreadGoalStatus::Active | ThreadGoalStatus::BudgetLimited => "not active",
+    };
+    let objective = escape_xml_text(&goal.objective);
+
+    format!(
+        "The thread goal is currently {status}. Earlier active-goal instructions for the objective below are superseded. Do not continue this goal unless the user or system reactivates or replaces it.\n\n<untrusted_objective>\n{objective}\n</untrusted_objective>"
+    )
+}
+
+fn render_goal_prompt(goal: &ThreadGoal, template: &Template, template_name: &str) -> String {
     let token_budget = goal
         .token_budget
         .map(|budget| budget.to_string())
@@ -1408,7 +1476,7 @@ fn continuation_prompt(goal: &ThreadGoal) -> String {
     let time_used_seconds = goal.time_used_seconds.to_string();
     let objective = escape_xml_text(&goal.objective);
 
-    match CONTINUATION_PROMPT_TEMPLATE.render([
+    match template.render([
         ("objective", objective.as_str()),
         ("tokens_used", tokens_used.as_str()),
         ("time_used_seconds", time_used_seconds.as_str()),
@@ -1416,7 +1484,7 @@ fn continuation_prompt(goal: &ThreadGoal) -> String {
         ("remaining_tokens", remaining_tokens.as_str()),
     ]) {
         Ok(prompt) => prompt,
-        Err(err) => panic!("embedded goals/continuation.md template failed to render: {err}"),
+        Err(err) => panic!("embedded {template_name} template failed to render: {err}"),
     }
 }
 
@@ -1509,10 +1577,12 @@ pub(crate) fn goal_token_delta_for_usage(usage: &TokenUsage) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use super::active_prompt;
     use super::budget_limit_prompt;
     use super::continuation_prompt;
     use super::escape_xml_text;
     use super::goal_token_delta_for_usage;
+    use super::inactive_prompt;
     use super::should_ignore_goal_for_mode;
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::ModeKind;
@@ -1586,6 +1656,25 @@ mod tests {
     }
 
     #[test]
+    fn active_prompt_keeps_original_goal_visible_until_complete() {
+        let prompt = active_prompt(&ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: "Fix <all> issues & verify".to_string(),
+            status: ThreadGoalStatus::Active,
+            token_budget: Some(100),
+            tokens_used: 25,
+            time_used_seconds: 7,
+            created_at: 1,
+            updated_at: 2,
+        });
+
+        assert!(prompt.contains("The thread has an active goal."));
+        assert!(prompt.contains("Fix &lt;all&gt; issues &amp; verify"));
+        assert!(prompt.contains("including after compaction or resume"));
+        assert!(prompt.contains("Call update_goal with status \"complete\" only after"));
+    }
+
+    #[test]
     fn budget_limit_prompt_steers_model_to_wrap_up_without_pausing() {
         let prompt = budget_limit_prompt(&ThreadGoal {
             thread_id: ThreadId::new(),
@@ -1605,6 +1694,24 @@ mod tests {
         assert!(prompt.contains("Tokens used: 10100"));
         assert!(prompt.to_lowercase().contains("wrap up this turn soon"));
         assert!(!prompt.contains("status \"paused\""));
+    }
+
+    #[test]
+    fn inactive_prompt_supersedes_stale_active_goal_context() {
+        let prompt = inactive_prompt(&ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: "Ship <loop>".to_string(),
+            status: ThreadGoalStatus::Complete,
+            token_budget: None,
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1,
+            updated_at: 2,
+        });
+
+        assert!(prompt.contains("currently complete"));
+        assert!(prompt.contains("Earlier active-goal instructions"));
+        assert!(prompt.contains("Ship &lt;loop&gt;"));
     }
 
     #[test]
@@ -1632,8 +1739,28 @@ mod tests {
             created_at: 1,
             updated_at: 2,
         });
+        let active = active_prompt(&ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: objective.to_string(),
+            status: ThreadGoalStatus::Active,
+            token_budget: None,
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1,
+            updated_at: 2,
+        });
+        let inactive = inactive_prompt(&ThreadGoal {
+            thread_id: ThreadId::new(),
+            objective: objective.to_string(),
+            status: ThreadGoalStatus::Complete,
+            token_budget: None,
+            tokens_used: 0,
+            time_used_seconds: 0,
+            created_at: 1,
+            updated_at: 2,
+        });
 
-        for prompt in [continuation, budget_limit] {
+        for prompt in [continuation, budget_limit, active, inactive] {
             assert!(prompt.contains(&escaped_objective));
             assert!(!prompt.contains(objective));
         }

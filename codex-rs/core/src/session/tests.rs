@@ -7012,6 +7012,110 @@ async fn interrupt_accounts_active_goal_before_pausing() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn build_initial_context_injects_active_thread_goal() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Ship <loop> & verify".to_string()),
+            status: None,
+            token_budget: Some(Some(1_000)),
+        },
+    )
+    .await?;
+
+    let initial_context = sess.build_initial_context(tc.as_ref()).await;
+    let developer_text = developer_input_texts(&initial_context).join("\n");
+
+    assert!(developer_text.contains("The thread has an active goal."));
+    assert!(developer_text.contains("Ship &lt;loop&gt; &amp; verify"));
+    assert!(developer_text.contains("including after compaction or resume"));
+    assert!(developer_text.contains("Tokens remaining: 1000"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_initial_context_omits_goal_when_paused_or_in_plan_mode() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Ship the loop".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: None,
+            status: Some(ThreadGoalStatus::Paused),
+            token_budget: None,
+        },
+    )
+    .await?;
+
+    let paused_context = sess.build_initial_context(tc.as_ref()).await;
+    let paused_developer_text = developer_input_texts(&paused_context).join("\n");
+    assert!(!paused_developer_text.contains("The thread has an active goal."));
+    assert!(paused_developer_text.contains("currently paused"));
+    assert!(paused_developer_text.contains("Earlier active-goal instructions"));
+
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: None,
+            status: Some(ThreadGoalStatus::Active),
+            token_budget: None,
+        },
+    )
+    .await?;
+    {
+        let mut state = sess.state.lock().await;
+        state.session_configuration.collaboration_mode.mode = ModeKind::Plan;
+    }
+
+    let plan_context = sess.build_initial_context(tc.as_ref()).await;
+    assert!(
+        !developer_input_texts(&plan_context)
+            .join("\n")
+            .contains("The thread has an active goal.")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn record_context_updates_reinjects_active_goal_on_steady_state_turn() -> anyhow::Result<()> {
+    let (sess, tc, _rx) = make_goal_session_and_context_with_rx().await;
+    sess.set_thread_goal(
+        tc.as_ref(),
+        SetGoalRequest {
+            objective: Some("Keep the original objective sticky".to_string()),
+            status: None,
+            token_budget: None,
+        },
+    )
+    .await?;
+    {
+        let mut state = sess.state.lock().await;
+        state.set_reference_context_item(Some(tc.to_turn_context_item()));
+    }
+
+    sess.record_context_updates_and_set_reference_context_item(tc.as_ref())
+        .await;
+
+    let history = sess.clone_history().await;
+    let developer_text = developer_input_texts(history.raw_items()).join("\n");
+    assert!(developer_text.contains("The thread has an active goal."));
+    assert!(developer_text.contains("Keep the original objective sticky"));
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn active_goal_continuation_runs_to_completion_after_turn() -> anyhow::Result<()> {
     let server = start_mock_server().await;

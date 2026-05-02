@@ -2712,6 +2712,17 @@ impl Session {
         {
             developer_sections.push(commit_message_instruction);
         }
+        if let Some(active_goal_context) =
+            self.thread_goal_context_item(collaboration_mode.mode).await
+            && let ResponseItem::Message { content, .. } = active_goal_context
+        {
+            for item in content {
+                let ContentItem::InputText { text } = item else {
+                    continue;
+                };
+                developer_sections.push(text);
+            }
+        }
         if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
             contextual_user_sections.push(
                 UserInstructions {
@@ -2815,8 +2826,16 @@ impl Session {
             self.build_initial_context(turn_context).await
         } else {
             // Steady-state path: append only context diffs to minimize token overhead.
-            self.build_settings_update_items(reference_context_item.as_ref(), turn_context)
+            let mut items = self
+                .build_settings_update_items(reference_context_item.as_ref(), turn_context)
+                .await;
+            if let Some(active_goal_context) = self
+                .thread_goal_context_item(self.collaboration_mode().await.mode)
                 .await
+            {
+                items.push(active_goal_context);
+            }
+            items
         };
         let turn_context_item = turn_context.to_turn_context_item();
         if !context_items.is_empty() {

@@ -199,7 +199,9 @@ async fn plan_implementation_popup_clear_context_emits_clear_submit_event() {
         "A previous agent produced the plan below to accomplish the user's task. \
         Implement the plan in a fresh context. Treat the plan as the source of \
         user intent, re-read files as needed, and carry the work through \
-        implementation and verification.\n\n- Step 1\n- Step 2\n"
+        implementation and verification. If this thread has no active goal, \
+        create one from this plan before starting implementation so the original \
+        intent persists through compaction and resume.\n\n- Step 1\n- Step 2\n"
     );
 }
 

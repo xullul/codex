@@ -12,12 +12,14 @@ const PLAN_IMPLEMENTATION_SUBTITLE: &str =
 const PLAN_IMPLEMENTATION_YES: &str = "Implement now";
 const PLAN_IMPLEMENTATION_CLEAR_CONTEXT: &str = "Start fresh and implement";
 const PLAN_IMPLEMENTATION_NO: &str = "Keep planning";
-pub(super) const PLAN_IMPLEMENTATION_CODING_MESSAGE: &str = "Implement the plan.";
+pub(super) const PLAN_IMPLEMENTATION_CODING_MESSAGE: &str = "Implement the plan. If this thread has no active goal, create one from the approved plan before starting implementation so the original intent persists through compaction and resume.";
 pub(super) const PLAN_IMPLEMENTATION_CLEAR_CONTEXT_PREFIX: &str = concat!(
     "A previous agent produced the plan below to accomplish the user's task. ",
     "Implement the plan in a fresh context. Treat the plan as the source of ",
     "user intent, re-read files as needed, and carry the work through ",
-    "implementation and verification."
+    "implementation and verification. If this thread has no active goal, ",
+    "create one from this plan before starting implementation so the original ",
+    "intent persists through compaction and resume."
 );
 pub(super) const PLAN_IMPLEMENTATION_DEFAULT_UNAVAILABLE: &str = "Default mode unavailable";
 pub(super) const PLAN_IMPLEMENTATION_NO_APPROVED_PLAN: &str = "No approved plan available";
