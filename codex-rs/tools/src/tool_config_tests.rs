@@ -183,7 +183,7 @@ fn subagents_keep_request_user_input_config_and_agent_jobs_workers_opt_in_by_lab
     assert!(tools_config.agent_jobs_worker_tools);
     assert_eq!(
         tools_config.exploration_subagents_policy,
-        ExplorationSubagentsPolicy::Auto
+        ExplorationSubagentsPolicy::Prefer
     );
 }
 

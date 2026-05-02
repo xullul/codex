@@ -43,8 +43,8 @@ pub enum UnifiedExecShellMode {
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum ExplorationSubagentsPolicy {
-    Prefer,
     #[default]
+    Prefer,
     Auto,
     Less,
     Disable,
@@ -53,9 +53,9 @@ pub enum ExplorationSubagentsPolicy {
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum OrchestrationMode {
     Full,
-    Explore,
-    Work,
     #[default]
+    Auto,
+    Work,
     Disable,
 }
 
@@ -63,7 +63,7 @@ impl From<OrchestrationModeConfigToml> for OrchestrationMode {
     fn from(value: OrchestrationModeConfigToml) -> Self {
         match value {
             OrchestrationModeConfigToml::Full => Self::Full,
-            OrchestrationModeConfigToml::Explore => Self::Explore,
+            OrchestrationModeConfigToml::Auto | OrchestrationModeConfigToml::Explore => Self::Auto,
             OrchestrationModeConfigToml::Work => Self::Work,
             OrchestrationModeConfigToml::Disable => Self::Disable,
         }
@@ -74,7 +74,7 @@ impl OrchestrationMode {
     pub fn config_value(self) -> &'static str {
         match self {
             Self::Full => "full",
-            Self::Explore => "explore",
+            Self::Auto => "auto",
             Self::Work => "work",
             Self::Disable => "disable",
         }
@@ -83,7 +83,7 @@ impl OrchestrationMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::Full => "Full",
-            Self::Explore => "Explore",
+            Self::Auto => "Auto",
             Self::Work => "Work",
             Self::Disable => "Disable",
         }
@@ -92,13 +92,13 @@ impl OrchestrationMode {
     pub fn usage_guidance(self) -> Option<&'static str> {
         match self {
             Self::Full => Some(
-                "### Orchestration mode\n- Act as an orchestrator for complex, multi-file tasks: make a brief plan, keep immediate blocking work local, and delegate separable exploration or implementation to explorer and worker agents.\n- Use explorer agents for broad discovery and worker agents for disjoint implementation scopes when the work can run in parallel.\n- Integrate subagent results before finalizing.",
+                "### Orchestration mode\n- Act as an orchestrator for complex, multi-file tasks: make a brief plan, keep immediate blocking work local, and delegate separable exploration, implementation, and verification to explorer and worker agents.\n- Prefer parallel explorer agents for broad discovery and worker agents for disjoint implementation or verification scopes.\n- Integrate subagent results before finalizing.",
             ),
-            Self::Explore => Some(
-                "### Orchestration mode\n- Prefer explorer agents for broad repository, library, pattern, or blocker discovery that can run beside local work.\n- Keep narrow or immediately blocking investigation local.\n- Ask explorers for concise findings, relevant paths, and risks.",
+            Self::Auto => Some(
+                "### Orchestration mode\n- Default to an explore-first workflow: prefer explorer agents for broad repository, library, pattern, or blocker discovery that spans multiple files or separable areas.\n- Keep narrow, immediately blocking, or edit-path investigation local, especially when you need to read a file you are about to modify.\n- Ask explorers for concise findings, relevant paths, and risks, then synthesize their results before editing.",
             ),
             Self::Work => Some(
-                "### Orchestration mode\n- Prefer worker agents for implementation tasks that can be split into disjoint files, modules, or responsibilities.\n- Give each worker explicit ownership and tell it to preserve other agents' edits.\n- Keep tightly coupled or blocking changes local.",
+                "### Orchestration mode\n- Use explorer agents for separable discovery and worker agents for implementation tasks that can be split into disjoint files, modules, or responsibilities.\n- Give each worker explicit ownership and tell it to preserve other agents' edits.\n- Keep tightly coupled, cross-cutting, or immediately blocking changes local.",
             ),
             Self::Disable => None,
         }

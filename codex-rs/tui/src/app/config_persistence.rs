@@ -559,7 +559,7 @@ impl App {
                 == ExplorationSubagentsConfigToml::Disable;
         if auto_enable_exploration {
             next_multi_agent_v2
-                .set_exploration_subagents_config_toml(ExplorationSubagentsConfigToml::Auto);
+                .set_exploration_subagents_config_toml(ExplorationSubagentsConfigToml::Prefer);
         }
         let orchestration_value = next_multi_agent_v2.orchestration_mode_config_value();
         let mut edits = vec![
@@ -602,7 +602,7 @@ impl App {
         self.chat_widget.set_orchestration_mode(orchestration_mode);
         if auto_enable_exploration {
             self.chat_widget
-                .set_subagent_config(ExplorationSubagentsConfigToml::Auto);
+                .set_subagent_config(ExplorationSubagentsConfigToml::Prefer);
         }
         self.chat_widget.submit_op(AppCommand::reload_user_config());
         self.chat_widget.add_info_message(
@@ -614,7 +614,7 @@ impl App {
         );
         if auto_enable_exploration {
             self.chat_widget.add_info_message(
-                "Subagent exploration preference was set to Auto because orchestration mode uses subagents."
+                "Subagent exploration preference was set to Prefer because orchestration mode uses subagents."
                     .to_string(),
                 /*hint*/ None,
             );

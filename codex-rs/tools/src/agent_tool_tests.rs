@@ -182,12 +182,12 @@ fn spawn_agent_tool_v2_renders_orchestration_mode_guidance() {
             "Act as an orchestrator for complex, multi-file tasks",
         ),
         (
-            OrchestrationMode::Explore,
-            "Prefer explorer agents for broad repository, library, pattern, or blocker discovery",
+            OrchestrationMode::Auto,
+            "Default to an explore-first workflow",
         ),
         (
             OrchestrationMode::Work,
-            "Prefer worker agents for implementation tasks that can be split",
+            "Use explorer agents for separable discovery and worker agents",
         ),
     ] {
         let tool = create_spawn_agent_tool_v2(SpawnAgentToolOptions {

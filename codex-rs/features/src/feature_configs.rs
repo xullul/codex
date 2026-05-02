@@ -6,8 +6,8 @@ use serde::Serialize;
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExplorationSubagentsConfigToml {
-    Prefer,
     #[default]
+    Prefer,
     Auto,
     Less,
     Disable,
@@ -17,9 +17,11 @@ pub enum ExplorationSubagentsConfigToml {
 #[serde(rename_all = "snake_case")]
 pub enum OrchestrationModeConfigToml {
     Full,
+    #[default]
+    Auto,
+    /// Legacy spelling for the default explore-first orchestration behavior.
     Explore,
     Work,
-    #[default]
     Disable,
 }
 

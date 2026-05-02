@@ -2358,15 +2358,15 @@ async fn build_initial_context_injects_orchestration_guidance_when_enabled() {
     let (session, mut turn_context) = make_session_and_context().await;
     turn_context.tools_config.collab_tools = true;
     turn_context.tools_config.multi_agent_v2 = true;
-    turn_context.tools_config.orchestration_mode = OrchestrationMode::Explore;
+    turn_context.tools_config.orchestration_mode = OrchestrationMode::Auto;
 
     let initial_context = session.build_initial_context(&turn_context).await;
     let developer_texts = developer_input_texts(&initial_context);
 
     assert!(
-        developer_texts.iter().any(|text| text.contains(
-            "Prefer explorer agents for broad repository, library, pattern, or blocker discovery"
-        )),
+        developer_texts
+            .iter()
+            .any(|text| text.contains("Default to an explore-first workflow")),
         "expected orchestration guidance, got {developer_texts:?}"
     );
 }

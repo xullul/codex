@@ -5,13 +5,12 @@ expression: popup
   Agent Orchestration
   Choose how Codex should split exploration and implementation.
 
-  1. Agentic coding     Full orchestration plus preferred exploration
-                        subagents.
-  2. Full               Use explorer and worker agents for separable coding
-                        work.
-  3. Explore            Prefer explorer agents for broad repository discovery.
-  4. Work               Prefer worker agents for disjoint implementation
-                        scopes.
-› 5. Disable (current)  Do not add orchestration guidance.
+› 1. Auto (current)  Default. Prefer explorer agents for separable multi-file
+                     discovery.
+  2. Work            Use explorer agents for discovery and worker agents for
+                     disjoint implementation.
+  3. Agentic coding  Full orchestration plus preferred exploration subagents.
+  4. Full            Use explorer and worker agents for separable coding work.
+  5. Disable         Do not add orchestration guidance.
 
   Press enter to confirm or esc to go back

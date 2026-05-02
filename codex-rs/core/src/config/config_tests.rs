@@ -8362,11 +8362,11 @@ enabled = true
 
     assert_eq!(
         config.multi_agent_v2.exploration_subagents_policy,
-        ExplorationSubagentsPolicy::Auto
+        ExplorationSubagentsPolicy::Prefer
     );
     assert_eq!(
         config.multi_agent_v2.orchestration_mode,
-        OrchestrationMode::Disable
+        OrchestrationMode::Auto
     );
 
     Ok(())
@@ -8431,7 +8431,7 @@ orchestration_mode = "explore"
     );
     assert_eq!(
         config.multi_agent_v2.orchestration_mode,
-        OrchestrationMode::Explore
+        OrchestrationMode::Auto
     );
 
     Ok(())

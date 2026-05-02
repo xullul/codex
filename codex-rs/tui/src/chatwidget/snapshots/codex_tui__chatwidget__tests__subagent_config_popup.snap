@@ -5,9 +5,9 @@ expression: popup
   Subagent Configuration
   Configure how Codex delegates to subagents.
 
-› 1. Exploration preference  Currently Auto. Configure proactive explorer
+› 1. Exploration preference  Currently Prefer. Configure proactive explorer
                              delegation.
-  2. Orchestration mode      Currently Disable. Configure multi-agent planning
+  2. Orchestration mode      Currently Auto. Configure multi-agent planning
                              guidance.
 
   Press enter to confirm or esc to go back

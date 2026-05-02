@@ -1622,13 +1622,24 @@
       ]
     },
     "OrchestrationModeConfigToml": {
-      "enum": [
-        "full",
-        "explore",
-        "work",
-        "disable"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "full",
+            "auto",
+            "work",
+            "disable"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Legacy spelling for the default explore-first orchestration behavior.",
+          "enum": [
+            "explore"
+          ],
+          "type": "string"
+        }
+      ]
     },
     "OtelConfigToml": {
       "additionalProperties": false,

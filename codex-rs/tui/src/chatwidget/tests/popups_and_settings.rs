@@ -2001,13 +2001,13 @@ async fn subagent_config_popup_sends_selected_policy() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.open_subagent_exploration_config_popup();
-    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
         rx.try_recv(),
         Ok(AppEvent::UpdateSubagentConfig {
-            exploration_subagents: ExplorationSubagentsConfigToml::Prefer
+            exploration_subagents: ExplorationSubagentsConfigToml::Auto
         })
     );
 }
@@ -2039,7 +2039,6 @@ async fn orchestration_mode_popup_sends_selected_mode() {
     chat.open_orchestration_mode_popup();
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
@@ -2055,7 +2054,6 @@ async fn orchestration_mode_popup_sends_agentic_coding_preset() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.open_orchestration_mode_popup();
-    chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));

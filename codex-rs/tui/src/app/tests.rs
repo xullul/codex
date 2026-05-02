@@ -1938,21 +1938,21 @@ async fn update_orchestration_mode_auto_enables_disabled_exploration() -> Result
     app.chat_widget
         .set_subagent_config(ExplorationSubagentsConfigToml::Disable);
 
-    app.update_orchestration_mode(OrchestrationModeConfigToml::Explore)
+    app.update_orchestration_mode(OrchestrationModeConfigToml::Auto)
         .await;
 
     assert_eq!(
         app.config
             .multi_agent_v2
             .exploration_subagents_config_toml(),
-        ExplorationSubagentsConfigToml::Auto
+        ExplorationSubagentsConfigToml::Prefer
     );
     assert_eq!(
         app.chat_widget
             .config_ref()
             .multi_agent_v2
             .exploration_subagents_config_toml(),
-        ExplorationSubagentsConfigToml::Auto
+        ExplorationSubagentsConfigToml::Prefer
     );
 
     let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
@@ -1966,11 +1966,11 @@ async fn update_orchestration_mode_auto_enables_disabled_exploration() -> Result
         .expect("multi_agent_v2 table should exist");
     assert_eq!(
         multi_agent_v2.get("orchestration_mode"),
-        Some(&TomlValue::String("explore".to_string()))
+        Some(&TomlValue::String("auto".to_string()))
     );
     assert_eq!(
         multi_agent_v2.get("exploration_subagents"),
-        Some(&TomlValue::String("auto".to_string()))
+        Some(&TomlValue::String("prefer".to_string()))
     );
     assert_eq!(op_rx.try_recv(), Ok(Op::ReloadUserConfig));
     let _updated_mode_cell = match app_event_rx.try_recv() {
@@ -1983,7 +1983,7 @@ async fn update_orchestration_mode_auto_enables_disabled_exploration() -> Result
     };
     let rendered = lines_to_single_string(&auto_enabled_cell.display_lines(/*width*/ 120));
     assert!(rendered.contains(
-        "Subagent exploration preference was set to Auto because orchestration mode uses subagents."
+        "Subagent exploration preference was set to Prefer because orchestration mode uses subagents."
     ));
     Ok(())
 }

@@ -3354,6 +3354,18 @@ impl ChatWidget {
         }
         let options = [
             (
+                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Auto),
+                "Auto",
+                "Default. Prefer explorer agents for separable multi-file discovery.",
+                current == OrchestrationModeConfigToml::Auto,
+            ),
+            (
+                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Work),
+                "Work",
+                "Use explorer agents for discovery and worker agents for disjoint implementation.",
+                current == OrchestrationModeConfigToml::Work,
+            ),
+            (
                 OrchestrationSelection::AgenticCoding,
                 "Agentic coding",
                 "Full orchestration plus preferred exploration subagents.",
@@ -3364,18 +3376,6 @@ impl ChatWidget {
                 "Full",
                 "Use explorer and worker agents for separable coding work.",
                 current == OrchestrationModeConfigToml::Full && !agentic_coding_is_current,
-            ),
-            (
-                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Explore),
-                "Explore",
-                "Prefer explorer agents for broad repository discovery.",
-                current == OrchestrationModeConfigToml::Explore,
-            ),
-            (
-                OrchestrationSelection::Mode(OrchestrationModeConfigToml::Work),
-                "Work",
-                "Prefer worker agents for disjoint implementation scopes.",
-                current == OrchestrationModeConfigToml::Work,
             ),
             (
                 OrchestrationSelection::Mode(OrchestrationModeConfigToml::Disable),

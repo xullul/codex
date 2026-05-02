@@ -810,8 +810,8 @@ pub struct MultiAgentV2Config {
 impl Default for MultiAgentV2Config {
     fn default() -> Self {
         Self {
-            exploration_subagents_policy: ExplorationSubagentsPolicy::Auto,
-            orchestration_mode: OrchestrationMode::Disable,
+            exploration_subagents_policy: ExplorationSubagentsPolicy::Prefer,
+            orchestration_mode: OrchestrationMode::Auto,
             max_concurrent_threads_per_session:
                 DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION,
             min_wait_timeout_ms: DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS,
@@ -828,7 +828,7 @@ impl MultiAgentV2Config {
     pub fn orchestration_mode_config_toml(&self) -> OrchestrationModeConfigToml {
         match self.orchestration_mode {
             OrchestrationMode::Full => OrchestrationModeConfigToml::Full,
-            OrchestrationMode::Explore => OrchestrationModeConfigToml::Explore,
+            OrchestrationMode::Auto => OrchestrationModeConfigToml::Auto,
             OrchestrationMode::Work => OrchestrationModeConfigToml::Work,
             OrchestrationMode::Disable => OrchestrationModeConfigToml::Disable,
         }

@@ -510,6 +510,7 @@ exploration_subagents = "{value}"
 fn multi_agent_v2_feature_config_deserializes_orchestration_mode_values() {
     for (value, expected) in [
         ("full", crate::OrchestrationModeConfigToml::Full),
+        ("auto", crate::OrchestrationModeConfigToml::Auto),
         ("explore", crate::OrchestrationModeConfigToml::Explore),
         ("work", crate::OrchestrationModeConfigToml::Work),
         ("disable", crate::OrchestrationModeConfigToml::Disable),
