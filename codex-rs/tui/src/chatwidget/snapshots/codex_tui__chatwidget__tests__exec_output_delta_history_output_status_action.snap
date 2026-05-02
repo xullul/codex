@@ -8,8 +8,6 @@ expression: normalize_snapshot_paths(rendered)
 
 • Testing (0s • esc to interrupt)
   └ cargo test -p codex-tui
-    Output: Compiling codex-tui v0.0.0
-            running 1819 tests
 
 
 › Ask Codex to do anything

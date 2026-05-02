@@ -359,11 +359,11 @@ use crate::collaboration_modes;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCell;
-use crate::exec_cell::ExecOutputTail;
 use crate::exec_cell::ExecStatusSummary;
 use crate::exec_cell::combine_exec_status_summaries;
 use crate::exec_cell::exec_status_summary;
 use crate::exec_cell::new_active_exec_command;
+use crate::exec_command::parsed_command_actions_from_item;
 use crate::exec_command::split_command_string;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::get_git_diff::get_git_diff;
@@ -454,7 +454,6 @@ struct RunningCommand {
     source: ExecCommandSource,
     interaction_input: Option<String>,
     started_order: u64,
-    output_tail: ExecOutputTail,
 }
 
 struct UnifiedExecProcessSummary {
@@ -2232,16 +2231,12 @@ impl ChatWidget {
             running
                 .into_iter()
                 .map(|(_, running)| {
-                    let mut summary = exec_status_summary(
+                    exec_status_summary(
                         &running.command,
                         &running.parsed_cmd,
                         running.source,
                         running.interaction_input.as_deref(),
-                    );
-                    summary.details = running
-                        .output_tail
-                        .append_to_details(summary.details, STATUS_DETAILS_DEFAULT_MAX_LINES);
-                    summary
+                    )
                 })
                 .collect(),
         )
@@ -4401,17 +4396,6 @@ impl ChatWidget {
 
     fn on_exec_command_output_delta(&mut self, ev: ExecCommandOutputDeltaEvent) {
         self.track_unified_exec_output_chunk(&ev.call_id, &ev.chunk);
-        let output_tail_changed = if self.suppressed_exec_calls.contains(&ev.call_id) {
-            false
-        } else {
-            self.running_commands
-                .get_mut(&ev.call_id)
-                .map(|running| running.output_tail.append(&ev.chunk))
-                .unwrap_or(false)
-        };
-        if output_tail_changed && self.bottom_pane.is_task_running() {
-            self.refresh_running_exec_status();
-        }
         if !self.bottom_pane.is_task_running() {
             return;
         }
@@ -5505,7 +5489,6 @@ impl ChatWidget {
                 source: ev.source,
                 interaction_input: interaction_input.clone(),
                 started_order,
-                output_tail: ExecOutputTail::default(),
             },
         );
         let is_wait_interaction = matches!(ev.source, ExecCommandSource::UnifiedExecInteraction)
@@ -6932,6 +6915,7 @@ impl ChatWidget {
                 exit_code,
                 duration_ms,
             } => {
+                let parsed_cmd = parsed_command_actions_from_item(&command, command_actions);
                 if matches!(
                     status,
                     codex_app_server_protocol::CommandExecutionStatus::InProgress
@@ -6942,10 +6926,7 @@ impl ChatWidget {
                         turn_id: turn_id.clone(),
                         command: split_command_string(&command),
                         cwd,
-                        parsed_cmd: command_actions
-                            .into_iter()
-                            .map(codex_app_server_protocol::CommandAction::into_core)
-                            .collect(),
+                        parsed_cmd,
                         source: source.to_core(),
                         interaction_input: None,
                     });
@@ -6957,10 +6938,7 @@ impl ChatWidget {
                         turn_id: turn_id.clone(),
                         command: split_command_string(&command),
                         cwd,
-                        parsed_cmd: command_actions
-                            .into_iter()
-                            .map(codex_app_server_protocol::CommandAction::into_core)
-                            .collect(),
+                        parsed_cmd,
                         source: source.to_core(),
                         interaction_input: None,
                         stdout: String::new(),
@@ -7545,16 +7523,14 @@ impl ChatWidget {
                 command_actions,
                 ..
             } => {
+                let parsed_cmd = parsed_command_actions_from_item(&command, command_actions);
                 self.on_exec_command_begin(ExecCommandBeginEvent {
                     call_id: id,
                     process_id,
                     turn_id: notification.turn_id,
                     command: split_command_string(&command),
                     cwd,
-                    parsed_cmd: command_actions
-                        .into_iter()
-                        .map(codex_app_server_protocol::CommandAction::into_core)
-                        .collect(),
+                    parsed_cmd,
                     source: source.to_core(),
                     interaction_input: None,
                 });

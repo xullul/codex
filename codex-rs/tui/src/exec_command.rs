@@ -1,7 +1,10 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use codex_app_server_protocol::CommandAction;
+use codex_protocol::parse_command::ParsedCommand;
 use codex_shell_command::parse_command::extract_shell_command;
+use codex_shell_command::parse_command::parse_command;
 use dirs::home_dir;
 use shlex::try_join;
 
@@ -29,6 +32,32 @@ pub(crate) fn split_command_string(command: &str) -> Vec<String> {
             parts
         }
         _ => vec![command.to_string()],
+    }
+}
+
+pub(crate) fn parsed_command_actions_from_item(
+    command: &str,
+    command_actions: Vec<CommandAction>,
+) -> Vec<ParsedCommand> {
+    let parsed = command_actions
+        .into_iter()
+        .map(CommandAction::into_core)
+        .collect::<Vec<_>>();
+    if parsed
+        .iter()
+        .any(|command| !matches!(command, ParsedCommand::Unknown { .. }))
+    {
+        return parsed;
+    }
+
+    let reparsed = parse_command(&split_command_string(command));
+    if reparsed
+        .iter()
+        .any(|command| !matches!(command, ParsedCommand::Unknown { .. }))
+    {
+        reparsed
+    } else {
+        parsed
     }
 }
 
@@ -103,5 +132,29 @@ mod tests {
     fn split_command_string_preserves_non_roundtrippable_windows_commands() {
         let command = r#"C:\Program Files\Git\bin\bash.exe -lc "echo hi""#;
         assert_eq!(split_command_string(command), vec![command.to_string()]);
+    }
+
+    #[test]
+    fn parsed_command_actions_falls_back_to_command_string_for_unknown_powershell() {
+        let command = shlex::try_join([
+            r#"C:\Program Files\PowerShell\7\pwsh.exe"#,
+            "-Command",
+            "Get-Content src/main.rs",
+        ])
+        .expect("round-trippable command");
+
+        assert_eq!(
+            parsed_command_actions_from_item(
+                &command,
+                vec![CommandAction::Unknown {
+                    command: command.clone()
+                }]
+            ),
+            vec![ParsedCommand::Read {
+                cmd: "Get-Content src/main.rs".to_string(),
+                name: "main.rs".to_string(),
+                path: PathBuf::from("src/main.rs"),
+            }]
+        );
     }
 }

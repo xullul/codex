@@ -925,7 +925,7 @@ async fn concurrent_exec_status_lists_secondary_activity_snapshot() {
 }
 
 #[tokio::test]
-async fn exec_output_delta_updates_live_status_tail_snapshot() {
+async fn exec_output_delta_stays_in_history_not_status_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
 
@@ -945,16 +945,17 @@ async fn exec_output_delta_updates_live_status_tail_snapshot() {
         .status_widget()
         .expect("status indicator should be visible");
     assert_eq!(status.header(), "Testing");
-    assert_eq!(
-        status.details(),
-        Some(
-            "cargo test -p codex-tui\nOutput: Compiling codex-tui v0.0.0\n        running 1819 tests"
-        )
+    assert_eq!(status.details(), Some("cargo test -p codex-tui"));
+
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("Compiling codex-tui v0.0.0") && active.contains("running 1819 tests"),
+        "expected live command output to stay in the history cell, got {active}"
     );
 
     let rendered = render_bottom_popup(&chat, /*width*/ 64);
     assert_chatwidget_snapshot!(
-        "exec_output_delta_live_status_tail",
+        "exec_output_delta_history_output_status_action",
         normalize_snapshot_paths(rendered)
     );
 
@@ -1178,6 +1179,47 @@ async fn powershell_exec_renders_semantic_search_and_keeps_raw_transcript() {
 
     end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
     assert_chatwidget_snapshot!("powershell_semantic_search_completed", active_blob(&chat));
+}
+
+#[tokio::test]
+async fn app_server_unknown_powershell_command_reparses_for_history() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let command = shlex::try_join([
+        r#"C:\Program Files\PowerShell\7\pwsh.exe"#,
+        "-Command",
+        "Get-Content src/main.rs",
+    ])
+    .expect("round-trippable command");
+
+    chat.handle_server_notification(
+        ServerNotification::ItemStarted(ItemStartedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item: AppServerThreadItem::CommandExecution {
+                id: "app-server-pwsh-read".to_string(),
+                command: command.clone(),
+                cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+                process_id: None,
+                source: AppServerCommandExecutionSource::Agent,
+                status: AppServerCommandExecutionStatus::InProgress,
+                command_actions: vec![AppServerCommandAction::Unknown { command }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            },
+        }),
+        /*replay_kind*/ None,
+    );
+
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("Read main.rs"),
+        "expected app-server command history to reparse PowerShell read, got {active}"
+    );
+    assert!(
+        !active.contains("PowerShell"),
+        "expected semantic summary instead of raw PowerShell wrapper, got {active}"
+    );
 }
 
 #[tokio::test]

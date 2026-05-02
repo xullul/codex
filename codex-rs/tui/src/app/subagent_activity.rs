@@ -4,6 +4,7 @@ use super::*;
 use crate::bottom_pane::SubagentActivityRow;
 use crate::bottom_pane::SubagentActivityState;
 use crate::exec_cell::exec_status_summary;
+use crate::exec_command::parsed_command_actions_from_item;
 use crate::status::format_tokens_compact;
 use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
@@ -426,11 +427,7 @@ fn semantic_command_status(
     source: CommandExecutionSource,
     command_actions: &[CommandAction],
 ) -> crate::exec_cell::ExecStatusSummary {
-    let parsed = command_actions
-        .iter()
-        .cloned()
-        .map(CommandAction::into_core)
-        .collect::<Vec<_>>();
+    let parsed = parsed_command_actions_from_item(command, command_actions.to_vec());
     exec_status_summary(
         &[command.to_string()],
         &parsed,
@@ -662,6 +659,51 @@ mod tests {
                 summary: "Search".to_string(),
                 detail: Some("subagent in codex-rs/tui/src".to_string()),
                 token_summary: Some("844K tokens".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn reparses_unknown_powershell_command_for_subagent_activity() {
+        let mut tracker = SubagentActivityTracker::default();
+        let primary_id = thread_id(1);
+        let agent_id = thread_id(2);
+        let command = shlex::try_join([
+            r#"C:\Program Files\PowerShell\7\pwsh.exe"#,
+            "-Command",
+            "Get-Content src/app.rs",
+        ])
+        .expect("round-trippable command");
+
+        tracker.note_notification(
+            agent_id,
+            "Huygens [explorer]".to_string(),
+            &ServerNotification::ItemStarted(codex_app_server_protocol::ItemStartedNotification {
+                thread_id: agent_id.to_string(),
+                turn_id: "turn-1".to_string(),
+                item: ThreadItem::CommandExecution {
+                    id: "cmd-1".to_string(),
+                    command: command.clone(),
+                    cwd: test_path_buf("/tmp/project").abs(),
+                    process_id: None,
+                    source: codex_app_server_protocol::CommandExecutionSource::Agent,
+                    status: CommandExecutionStatus::InProgress,
+                    command_actions: vec![CommandAction::Unknown { command }],
+                    aggregated_output: None,
+                    exit_code: None,
+                    duration_ms: None,
+                },
+            }),
+        );
+
+        assert_eq!(
+            tracker.rows(Some(primary_id), Some(primary_id)),
+            vec![SubagentActivityRow {
+                label: "Huygens [explorer]".to_string(),
+                state: SubagentActivityState::Running,
+                summary: "Read".to_string(),
+                detail: Some("app.rs".to_string()),
+                token_summary: None,
             }]
         );
     }
