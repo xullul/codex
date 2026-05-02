@@ -132,6 +132,7 @@ pub(crate) use title_setup::TerminalTitleItem;
 pub(crate) use title_setup::TerminalTitleSetupView;
 #[cfg(test)]
 pub(crate) use title_setup::preview_line_for_title_items;
+pub(crate) use work_state_view::WorkProgressRow;
 pub(crate) use work_state_view::WorkStatePlanItem;
 pub(crate) use work_state_view::WorkStateSnapshot;
 mod paste_burst;

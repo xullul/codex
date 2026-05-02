@@ -415,6 +415,8 @@ export type { TurnInterruptResponse } from "./TurnInterruptResponse";
 export type { TurnPlanStep } from "./TurnPlanStep";
 export type { TurnPlanStepStatus } from "./TurnPlanStepStatus";
 export type { TurnPlanUpdatedNotification } from "./TurnPlanUpdatedNotification";
+export type { TurnRepoIntelStatus } from "./TurnRepoIntelStatus";
+export type { TurnRepoIntelUpdatedNotification } from "./TurnRepoIntelUpdatedNotification";
 export type { TurnStartParams } from "./TurnStartParams";
 export type { TurnStartResponse } from "./TurnStartResponse";
 export type { TurnStartedNotification } from "./TurnStartedNotification";

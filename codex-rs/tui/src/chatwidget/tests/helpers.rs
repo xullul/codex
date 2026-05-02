@@ -217,6 +217,7 @@ pub(super) async fn make_chatwidget_manual(
         latest_proposed_plan_markdown: None,
         latest_work_state_proposed_plan_markdown: None,
         latest_work_state_checklist: Vec::new(),
+        latest_work_state_progress: Vec::new(),
         latest_work_state_subagents: Vec::new(),
         saw_copy_source_this_turn: false,
         running_commands: HashMap::new(),

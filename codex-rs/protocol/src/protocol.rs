@@ -1351,6 +1351,9 @@ pub enum EventMsg {
     #[serde(rename = "task_started", alias = "turn_started")]
     TurnStarted(TurnStartedEvent),
 
+    /// Bounded repository reconnaissance progress for the current turn.
+    RepoIntel(RepoIntelEvent),
+
     /// Agent has completed all actions.
     /// v1 wire format uses `task_complete`; accept `turn_complete` for v2 interop.
     #[serde(rename = "task_complete", alias = "turn_complete")]
@@ -1538,6 +1541,22 @@ pub enum HookEventName {
     SessionStart,
     UserPromptSubmit,
     Stop,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoIntelStatus {
+    Started,
+    Completed,
+    Skipped,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct RepoIntelEvent {
+    pub status: RepoIntelStatus,
+    pub summary: String,
+    pub details: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]

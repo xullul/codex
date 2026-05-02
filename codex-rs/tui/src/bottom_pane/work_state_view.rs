@@ -78,10 +78,17 @@ impl WorkStatePlanItem {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkProgressRow {
+    pub(crate) label: String,
+    pub(crate) detail: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WorkStateSnapshot {
     pub(crate) proposed_plan_markdown: Option<String>,
     pub(crate) checklist: Vec<WorkStatePlanItem>,
+    pub(crate) progress: Vec<WorkProgressRow>,
     pub(crate) queued_messages: Vec<String>,
     pub(crate) pending_steers: Vec<String>,
     pub(crate) rejected_steers: Vec<String>,
@@ -163,6 +170,34 @@ impl WorkStateView {
             push_section_with_summary(&mut lines, "Task progress", &progress_summary);
             for item in &self.snapshot.checklist {
                 lines.extend(wrap_checklist_item(item, width));
+            }
+        }
+
+        if !self.snapshot.progress.is_empty() {
+            has_content = true;
+            push_gap(&mut lines);
+            push_section_with_summary(
+                &mut lines,
+                "Evidence",
+                &pluralize(self.snapshot.progress.len(), "event", "events"),
+            );
+            for row in &self.snapshot.progress {
+                let line = if row.detail.trim().is_empty() {
+                    Line::from(vec!["  - ".dim(), row.label.clone().into()])
+                } else {
+                    Line::from(vec![
+                        "  - ".dim(),
+                        row.label.clone().into(),
+                        " · ".dim(),
+                        row.detail.clone().dim(),
+                    ])
+                };
+                lines.extend(adaptive_wrap_lines(
+                    std::iter::once(line),
+                    RtOptions::new(width as usize)
+                        .initial_indent("".into())
+                        .subsequent_indent("    ".into()),
+                ));
             }
         }
 
@@ -284,6 +319,9 @@ impl WorkStateView {
                 "steps {completed}/{}",
                 self.snapshot.checklist.len()
             ));
+        }
+        if !self.snapshot.progress.is_empty() {
+            parts.push(format!("evidence {}", self.snapshot.progress.len()));
         }
         let input_count = self.snapshot.pending_steers.len()
             + self.snapshot.rejected_steers.len()
@@ -485,6 +523,16 @@ mod tests {
                 item("Inspect current surfaces", WorkStateStepStatus::Completed),
                 item("Add a unified work panel", WorkStateStepStatus::InProgress),
                 item("Update snapshots", WorkStateStepStatus::Pending),
+            ],
+            progress: vec![
+                WorkProgressRow {
+                    label: "repo intel".to_string(),
+                    detail: "Rust/Cargo; 420 files, 2 manifests".to_string(),
+                },
+                WorkProgressRow {
+                    label: "command".to_string(),
+                    detail: "cargo test -p codex-tui".to_string(),
+                },
             ],
             queued_messages: vec!["Follow up once tests pass".to_string()],
             pending_steers: vec!["Use the existing bottom pane stack".to_string()],

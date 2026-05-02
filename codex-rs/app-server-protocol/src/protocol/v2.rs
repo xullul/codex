@@ -91,6 +91,7 @@ use codex_protocol::protocol::RealtimeConversationVersion;
 use codex_protocol::protocol::RealtimeOutputModality;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::RealtimeVoicesList;
+use codex_protocol::protocol::RepoIntelStatus as CoreRepoIntelStatus;
 use codex_protocol::protocol::ReviewDecision as CoreReviewDecision;
 use codex_protocol::protocol::SessionSource as CoreSessionSource;
 use codex_protocol::protocol::SkillDependencies as CoreSkillDependencies;
@@ -6797,6 +6798,38 @@ pub struct TurnPlanUpdatedNotification {
     pub turn_id: String,
     pub explanation: Option<String>,
     pub plan: Vec<TurnPlanStep>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TurnRepoIntelUpdatedNotification {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub status: TurnRepoIntelStatus,
+    pub summary: String,
+    pub details: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum TurnRepoIntelStatus {
+    Started,
+    Completed,
+    Skipped,
+    Failed,
+}
+
+impl From<CoreRepoIntelStatus> for TurnRepoIntelStatus {
+    fn from(value: CoreRepoIntelStatus) -> Self {
+        match value {
+            CoreRepoIntelStatus::Started => Self::Started,
+            CoreRepoIntelStatus::Completed => Self::Completed,
+            CoreRepoIntelStatus::Skipped => Self::Skipped,
+            CoreRepoIntelStatus::Failed => Self::Failed,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]

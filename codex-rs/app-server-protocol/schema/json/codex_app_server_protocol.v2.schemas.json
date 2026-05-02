@@ -11028,6 +11028,26 @@
           "properties": {
             "method": {
               "enum": [
+                "turn/repoIntel/updated"
+              ],
+              "title": "Turn/repoIntel/updatedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/TurnRepoIntelUpdatedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Turn/repoIntel/updatedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "item/started"
               ],
               "title": "Item/startedNotificationMethod",
@@ -15381,6 +15401,47 @@
         "turnId"
       ],
       "title": "TurnPlanUpdatedNotification",
+      "type": "object"
+    },
+    "TurnRepoIntelStatus": {
+      "enum": [
+        "started",
+        "completed",
+        "skipped",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "TurnRepoIntelUpdatedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/TurnRepoIntelStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "details",
+        "status",
+        "summary",
+        "threadId",
+        "turnId"
+      ],
+      "title": "TurnRepoIntelUpdatedNotification",
       "type": "object"
     },
     "TurnStartParams": {

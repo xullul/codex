@@ -18,7 +18,9 @@ use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
+use crate::context::RepoIntelContext;
 use crate::feedback_tags;
+use crate::guardian::is_guardian_reviewer_source;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
 use crate::hook_runtime::inspect_pending_input;
@@ -92,9 +94,13 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::PlanDeltaEvent;
 use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
+use codex_protocol::protocol::RepoIntelEvent;
+use codex_protocol::protocol::RepoIntelStatus;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
+use codex_repo_intel::RepoIntelBudget;
+use codex_repo_intel::RepoIntelRequest;
 use codex_tools::ToolName;
 use codex_tools::filter_tool_suggest_discoverable_tools_for_client;
 use codex_utils_stream_parser::AssistantTextChunk;
@@ -355,6 +361,14 @@ pub(crate) async fn run_turn(
 
     track_turn_resolved_config_analytics(&sess, &turn_context, &input).await;
 
+    let repo_intel_context = build_repo_intel_context(
+        &sess,
+        &turn_context,
+        &input,
+        cancellation_token.child_token(),
+    )
+    .await;
+
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
     let mut last_agent_message: Option<String> = None;
     let mut stop_hook_active = false;
@@ -428,9 +442,14 @@ pub(crate) async fn run_turn(
 
         // Construct the input that we will send to the model.
         let sampling_request_input: Vec<ResponseItem> = {
-            sess.clone_history()
+            let mut input = sess
+                .clone_history()
                 .await
-                .for_prompt(&turn_context.model_info.input_modalities)
+                .for_prompt(&turn_context.model_info.input_modalities);
+            if let Some(repo_intel_context) = repo_intel_context.as_ref() {
+                input.push(repo_intel_context.clone());
+            }
+            input
         };
 
         let sampling_request_input_messages = sampling_request_input
@@ -654,6 +673,127 @@ pub(crate) async fn run_turn(
     }
 
     last_agent_message
+}
+
+async fn build_repo_intel_context(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    input: &[UserInput],
+    cancellation_token: CancellationToken,
+) -> Option<ResponseItem> {
+    if is_guardian_reviewer_source(&turn_context.session_source) {
+        return None;
+    }
+
+    let user_prompt = user_input_text(input);
+    if !codex_repo_intel::should_collect_repo_intel(&user_prompt) {
+        return None;
+    }
+
+    sess.send_event(
+        turn_context,
+        EventMsg::RepoIntel(RepoIntelEvent {
+            status: RepoIntelStatus::Started,
+            summary: "surveying repository context".to_string(),
+            details: vec![turn_context.cwd.display().to_string()],
+        }),
+    )
+    .await;
+
+    let request = RepoIntelRequest {
+        cwd: turn_context.cwd.to_path_buf(),
+        user_prompt,
+        budget: RepoIntelBudget::default(),
+    };
+    let scan = tokio::task::spawn_blocking(move || codex_repo_intel::collect_repo_intel(&request))
+        .or_cancel(&cancellation_token)
+        .await;
+
+    match scan {
+        Ok(Ok(Ok(snapshot))) => {
+            let details = repo_intel_event_details(&snapshot);
+            let summary = snapshot.progress_summary();
+            let item = ContextualUserFragment::into(RepoIntelContext::new(snapshot));
+            sess.send_event(
+                turn_context,
+                EventMsg::RepoIntel(RepoIntelEvent {
+                    status: RepoIntelStatus::Completed,
+                    summary,
+                    details,
+                }),
+            )
+            .await;
+            Some(item)
+        }
+        Ok(Ok(Err(err))) => {
+            sess.send_event(
+                turn_context,
+                EventMsg::RepoIntel(RepoIntelEvent {
+                    status: RepoIntelStatus::Failed,
+                    summary: "repo intel unavailable".to_string(),
+                    details: vec![err.to_string()],
+                }),
+            )
+            .await;
+            None
+        }
+        Ok(Err(err)) => {
+            sess.send_event(
+                turn_context,
+                EventMsg::RepoIntel(RepoIntelEvent {
+                    status: RepoIntelStatus::Failed,
+                    summary: "repo intel unavailable".to_string(),
+                    details: vec![err.to_string()],
+                }),
+            )
+            .await;
+            None
+        }
+        Err(_) => {
+            sess.send_event(
+                turn_context,
+                EventMsg::RepoIntel(RepoIntelEvent {
+                    status: RepoIntelStatus::Failed,
+                    summary: "repo intel canceled".to_string(),
+                    details: Vec::new(),
+                }),
+            )
+            .await;
+            None
+        }
+    }
+}
+
+fn user_input_text(input: &[UserInput]) -> String {
+    input
+        .iter()
+        .filter_map(|item| match item {
+            UserInput::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn repo_intel_event_details(snapshot: &codex_repo_intel::RepoIntelSnapshot) -> Vec<String> {
+    let mut details = Vec::new();
+    if !snapshot.project_kinds.is_empty() {
+        details.push(format!("projects: {}", snapshot.project_kinds.join(", ")));
+    }
+    if !snapshot.languages.is_empty() {
+        let languages = snapshot
+            .languages
+            .iter()
+            .take(4)
+            .map(|language| format!("{} {}", language.name, language.files))
+            .collect::<Vec<_>>()
+            .join(", ");
+        details.push(format!("languages: {languages}"));
+    }
+    if !snapshot.commands.is_empty() {
+        details.push(format!("commands: {}", snapshot.commands.join(", ")));
+    }
+    details
 }
 
 async fn track_turn_resolved_config_analytics(
@@ -1439,6 +1579,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::ModelVerification(_)
         | EventMsg::ContextCompacted(_)
         | EventMsg::ThreadRolledBack(_)
+        | EventMsg::RepoIntel(_)
         | EventMsg::TurnStarted(_)
         | EventMsg::TurnComplete(_)
         | EventMsg::TokenCount(_)

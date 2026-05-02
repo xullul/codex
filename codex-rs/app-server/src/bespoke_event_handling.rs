@@ -95,6 +95,7 @@ use codex_app_server_protocol::TurnError;
 use codex_app_server_protocol::TurnInterruptResponse;
 use codex_app_server_protocol::TurnPlanStep;
 use codex_app_server_protocol::TurnPlanUpdatedNotification;
+use codex_app_server_protocol::TurnRepoIntelUpdatedNotification;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::WarningNotification;
@@ -1232,6 +1233,18 @@ pub(crate) async fn apply_bespoke_event_handling(
             };
             outgoing
                 .send_server_notification(ServerNotification::PlanDelta(notification))
+                .await;
+        }
+        EventMsg::RepoIntel(event) => {
+            let notification = TurnRepoIntelUpdatedNotification {
+                thread_id: conversation_id.to_string(),
+                turn_id: event_turn_id.clone(),
+                status: event.status.into(),
+                summary: event.summary,
+                details: event.details,
+            };
+            outgoing
+                .send_server_notification(ServerNotification::TurnRepoIntelUpdated(notification))
                 .await;
         }
         EventMsg::ContextCompacted(..) => {

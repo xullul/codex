@@ -60,6 +60,7 @@ use crate::bottom_pane::StatusSurfacePreviewItem;
 use crate::bottom_pane::SubagentActivityRow;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
+use crate::bottom_pane::WorkProgressRow;
 use crate::bottom_pane::WorkStatePlanItem;
 use crate::bottom_pane::WorkStateSnapshot;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
@@ -205,6 +206,8 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::RateLimitReachedType;
 use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::RepoIntelEvent;
+use codex_protocol::protocol::RepoIntelStatus;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::protocol::SkillMetadata as ProtocolSkillMetadata;
@@ -511,6 +514,10 @@ fn is_standard_tool_call(parsed_cmd: &[ParsedCommand]) -> bool {
         && parsed_cmd
             .iter()
             .all(|parsed| !matches!(parsed, ParsedCommand::Unknown { .. }))
+}
+
+fn command_display(command: &[String]) -> String {
+    shlex::try_join(command.iter().map(String::as_str)).unwrap_or_else(|_| command.join(" "))
 }
 
 const RATE_LIMIT_WARNING_THRESHOLDS: [f64; 3] = [75.0, 90.0, 95.0];
@@ -889,6 +896,7 @@ pub(crate) struct ChatWidget {
     latest_work_state_proposed_plan_markdown: Option<String>,
     /// Latest `update_plan` snapshot for the inspectable work-state panel.
     latest_work_state_checklist: Vec<WorkStatePlanItem>,
+    latest_work_state_progress: Vec<WorkProgressRow>,
     latest_work_state_subagents: Vec<SubagentActivityRow>,
     /// Whether this turn already produced a copyable response.
     ///
@@ -1258,6 +1266,7 @@ pub(crate) struct ThreadInputState {
     agent_turn_running: bool,
     latest_work_state_proposed_plan_markdown: Option<String>,
     latest_work_state_checklist: Vec<WorkStatePlanItem>,
+    latest_work_state_progress: Vec<WorkProgressRow>,
     latest_work_state_subagents: Vec<SubagentActivityRow>,
 }
 
@@ -2897,6 +2906,7 @@ impl ChatWidget {
         self.saw_plan_item_this_turn = false;
         self.had_work_activity = false;
         self.latest_proposed_plan_markdown = None;
+        self.latest_work_state_progress.clear();
         self.plan_delta_buffer.clear();
         self.plan_item_active = false;
         self.adaptive_chunking.reset();
@@ -3982,6 +3992,7 @@ impl ChatWidget {
                 .latest_work_state_proposed_plan_markdown
                 .clone(),
             latest_work_state_checklist: self.latest_work_state_checklist.clone(),
+            latest_work_state_progress: self.latest_work_state_progress.clone(),
             latest_work_state_subagents: self.latest_work_state_subagents.clone(),
         })
     }
@@ -3994,6 +4005,7 @@ impl ChatWidget {
             self.latest_work_state_proposed_plan_markdown =
                 input_state.latest_work_state_proposed_plan_markdown;
             self.latest_work_state_checklist = input_state.latest_work_state_checklist;
+            self.latest_work_state_progress = input_state.latest_work_state_progress;
             self.latest_work_state_subagents = input_state.latest_work_state_subagents;
             self.agent_turn_running = input_state.agent_turn_running;
             self.goal_status_active_turn_started_at =
@@ -4077,6 +4089,7 @@ impl ChatWidget {
             self.queued_user_message_history_records.clear();
             self.latest_work_state_proposed_plan_markdown = None;
             self.latest_work_state_checklist.clear();
+            self.latest_work_state_progress.clear();
             self.latest_work_state_subagents.clear();
         }
         self.turn_sleep_inhibitor
@@ -4123,6 +4136,58 @@ impl ChatWidget {
         self.bottom_pane.set_plan_checklist(update.plan.clone());
         self.refresh_status_surfaces();
         self.add_to_history(history_cell::new_plan_update(update));
+    }
+
+    fn on_repo_intel(&mut self, event: RepoIntelEvent) {
+        let label = match event.status {
+            RepoIntelStatus::Started => "repo intel",
+            RepoIntelStatus::Completed => "repo intel",
+            RepoIntelStatus::Skipped => "repo intel skipped",
+            RepoIntelStatus::Failed => "repo intel failed",
+        };
+        let detail = if event.details.is_empty() {
+            event.summary.clone()
+        } else {
+            format!("{} · {}", event.summary, event.details.join(" · "))
+        };
+        self.add_work_progress(label.to_string(), detail.clone());
+        match event.status {
+            RepoIntelStatus::Started => self.set_status(
+                "Working".to_string(),
+                Some("surveying repository context".to_string()),
+                StatusDetailsCapitalization::Preserve,
+                1,
+            ),
+            RepoIntelStatus::Completed => self.set_status(
+                "Working".to_string(),
+                Some(detail),
+                StatusDetailsCapitalization::Preserve,
+                STATUS_DETAILS_DEFAULT_MAX_LINES,
+            ),
+            RepoIntelStatus::Skipped | RepoIntelStatus::Failed => {}
+        }
+        self.refresh_status_surfaces();
+        self.request_redraw();
+    }
+
+    fn add_work_progress(&mut self, label: String, detail: String) {
+        const MAX_WORK_PROGRESS_ROWS: usize = 16;
+        if self
+            .latest_work_state_progress
+            .last()
+            .is_some_and(|row| row.label == label && row.detail == detail)
+        {
+            return;
+        }
+        self.latest_work_state_progress
+            .push(WorkProgressRow { label, detail });
+        if self.latest_work_state_progress.len() > MAX_WORK_PROGRESS_ROWS {
+            let extra = self
+                .latest_work_state_progress
+                .len()
+                .saturating_sub(MAX_WORK_PROGRESS_ROWS);
+            self.latest_work_state_progress.drain(0..extra);
+        }
     }
 
     fn on_exec_approval_request(&mut self, _id: String, ev: ExecApprovalRequestEvent) {
@@ -4379,6 +4444,7 @@ impl ChatWidget {
 
     fn on_exec_command_begin(&mut self, ev: ExecCommandBeginEvent) {
         self.flush_answer_stream_with_separator();
+        self.add_work_progress("command started".to_string(), command_display(&ev.command));
         if is_unified_exec_source(ev.source) {
             self.track_unified_exec_process_begin(&ev);
             if !self.bottom_pane.is_task_running() {
@@ -4507,6 +4573,10 @@ impl ChatWidget {
     }
 
     fn on_exec_command_end(&mut self, ev: ExecCommandEndEvent) {
+        self.add_work_progress(
+            "command finished".to_string(),
+            format!("{} · {:?}", command_display(&ev.command), ev.status),
+        );
         if is_unified_exec_source(ev.source) {
             if let Some(process_id) = ev.process_id.as_deref()
                 && self
@@ -5742,6 +5812,7 @@ impl ChatWidget {
             latest_proposed_plan_markdown: None,
             latest_work_state_proposed_plan_markdown: None,
             latest_work_state_checklist: Vec::new(),
+            latest_work_state_progress: Vec::new(),
             latest_work_state_subagents: Vec::new(),
             saw_copy_source_this_turn: false,
             mcp_startup_expected_servers: None,
@@ -7264,6 +7335,26 @@ impl ChatWidget {
                         .collect(),
                 })
             }
+            ServerNotification::TurnRepoIntelUpdated(notification) => {
+                self.on_repo_intel(RepoIntelEvent {
+                    status: match notification.status {
+                        codex_app_server_protocol::TurnRepoIntelStatus::Started => {
+                            RepoIntelStatus::Started
+                        }
+                        codex_app_server_protocol::TurnRepoIntelStatus::Completed => {
+                            RepoIntelStatus::Completed
+                        }
+                        codex_app_server_protocol::TurnRepoIntelStatus::Skipped => {
+                            RepoIntelStatus::Skipped
+                        }
+                        codex_app_server_protocol::TurnRepoIntelStatus::Failed => {
+                            RepoIntelStatus::Failed
+                        }
+                    },
+                    summary: notification.summary,
+                    details: notification.details,
+                })
+            }
             ServerNotification::HookStarted(notification) => {
                 self.on_hook_started(hook_started_event_from_notification(notification));
             }
@@ -7822,6 +7913,7 @@ impl ChatWidget {
                     self.on_task_started();
                 }
             }
+            EventMsg::RepoIntel(event) => self.on_repo_intel(event),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 last_agent_message,
                 duration_ms,
@@ -8335,6 +8427,7 @@ impl ChatWidget {
         self.bottom_pane.show_work_state_view(WorkStateSnapshot {
             proposed_plan_markdown: self.latest_work_state_proposed_plan_markdown.clone(),
             checklist: self.latest_work_state_checklist.clone(),
+            progress: self.latest_work_state_progress.clone(),
             queued_messages,
             pending_steers,
             rejected_steers,
