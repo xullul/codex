@@ -5,7 +5,7 @@ expression: "render(&checklist, 54)"
 Buffer {
     area: Rect { x: 0, y: 0, width: 54, height: 3 },
     content: [
-        "• Plan 2/2 complete                                   ",
+        "• Plan 2/2 complete · /work                           ",
         "  ✓ Inspect Claude task rendering                     ",
         "  ✓ Mirror completed task state                       ",
     ],
@@ -13,7 +13,7 @@ Buffer {
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 6, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 19, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 27, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 33, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,

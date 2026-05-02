@@ -44,6 +44,14 @@ impl WorkStateStepStatus {
             Self::Completed => StepStatus::Completed,
         }
     }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "active",
+            Self::Completed => "done",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +115,8 @@ impl WorkStateView {
             "> ".into(),
             "Work state".bold(),
             "  ".into(),
+            self.thread_summary().dim(),
+            "  ".into(),
             key_hint::plain(KeyCode::Esc).into(),
             " close".dim(),
         ])];
@@ -120,7 +130,7 @@ impl WorkStateView {
         {
             has_content = true;
             push_gap(&mut lines);
-            push_section(&mut lines, "Proposed plan");
+            push_section_with_summary(&mut lines, "Proposed plan", "ready to implement");
             for line in markdown.lines().filter(|line| !line.trim().is_empty()) {
                 lines.extend(wrap_dimmed(line, width, "  "));
             }
@@ -129,16 +139,28 @@ impl WorkStateView {
         if !self.snapshot.checklist.is_empty() {
             has_content = true;
             push_gap(&mut lines);
-            push_section(&mut lines, "Task progress");
             let completed = self
                 .snapshot
                 .checklist
                 .iter()
                 .filter(|item| matches!(item.status, WorkStateStepStatus::Completed))
                 .count();
-            lines.push(Line::from(
-                format!("  {completed}/{} complete", self.snapshot.checklist.len()).dim(),
-            ));
+            let active = self
+                .snapshot
+                .checklist
+                .iter()
+                .position(|item| matches!(item.status, WorkStateStepStatus::InProgress))
+                .map(|idx| idx + 1);
+            let progress_summary = active.map_or_else(
+                || format!("{completed}/{} complete", self.snapshot.checklist.len()),
+                |active| {
+                    format!(
+                        "{completed}/{} complete, step {active} active",
+                        self.snapshot.checklist.len()
+                    )
+                },
+            );
+            push_section_with_summary(&mut lines, "Task progress", &progress_summary);
             for item in &self.snapshot.checklist {
                 lines.extend(wrap_checklist_item(item, width));
             }
@@ -150,7 +172,11 @@ impl WorkStateView {
         {
             has_content = true;
             push_gap(&mut lines);
-            push_section(&mut lines, "Queued input");
+            let input_count = self.snapshot.pending_steers.len()
+                + self.snapshot.rejected_steers.len()
+                + self.snapshot.queued_messages.len();
+            let input_summary = pluralize(input_count, "message", "messages");
+            push_section_with_summary(&mut lines, "Queued input", &input_summary);
             push_input_group(
                 &mut lines,
                 width,
@@ -174,7 +200,19 @@ impl WorkStateView {
         if !self.snapshot.subagents.is_empty() {
             has_content = true;
             push_gap(&mut lines);
-            push_section(&mut lines, "Subagents");
+            let active_count = self
+                .snapshot
+                .subagents
+                .iter()
+                .filter(|row| row.state.is_active())
+                .count();
+            let done_count = self.snapshot.subagents.len().saturating_sub(active_count);
+            let subagent_summary = match (active_count, done_count) {
+                (0, done) => pluralize(done, "done", "done"),
+                (active, 0) => pluralize(active, "active", "active"),
+                (active, done) => format!("{active} active, {done} done"),
+            };
+            push_section_with_summary(&mut lines, "Subagents", &subagent_summary);
             for row in &self.snapshot.subagents {
                 let detail = row
                     .detail
@@ -190,8 +228,10 @@ impl WorkStateView {
                     .unwrap_or_default();
                 lines.extend(wrap_dimmed(
                     &format!(
-                        "{} · {:?} · {}{detail}{token_summary}",
-                        row.label, row.state, row.summary
+                        "{} · {} · {}{detail}{token_summary}",
+                        row.label,
+                        row.state.label(),
+                        row.summary
                     ),
                     width,
                     "  ",
@@ -207,20 +247,73 @@ impl WorkStateView {
         {
             has_content = true;
             push_gap(&mut lines);
-            push_section(&mut lines, "Background terminals");
+            push_section_with_summary(&mut lines, "Background terminals", "running");
             lines.extend(wrap_dimmed(summary, width, "  "));
         }
 
         if !has_content {
             push_gap(&mut lines);
-            lines.push(
-                "  No active or recent work state for this thread."
-                    .dim()
-                    .into(),
-            );
+            lines.extend(wrap_dimmed(
+                "No active plan, queued input, subagents, or background terminals.",
+                width,
+                "  ",
+            ));
         }
 
         lines
+    }
+
+    fn thread_summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self
+            .snapshot
+            .proposed_plan_markdown
+            .as_deref()
+            .is_some_and(|markdown| !markdown.trim().is_empty())
+        {
+            parts.push("plan".to_string());
+        }
+        if !self.snapshot.checklist.is_empty() {
+            let completed = self
+                .snapshot
+                .checklist
+                .iter()
+                .filter(|item| matches!(item.status, WorkStateStepStatus::Completed))
+                .count();
+            parts.push(format!(
+                "steps {completed}/{}",
+                self.snapshot.checklist.len()
+            ));
+        }
+        let input_count = self.snapshot.pending_steers.len()
+            + self.snapshot.rejected_steers.len()
+            + self.snapshot.queued_messages.len();
+        if input_count > 0 {
+            parts.push(format!("input {input_count}"));
+        }
+        let active_subagents = self
+            .snapshot
+            .subagents
+            .iter()
+            .filter(|row| row.state.is_active())
+            .count();
+        if active_subagents > 0 {
+            parts.push(format!("agents {active_subagents}"));
+        }
+        if self
+            .snapshot
+            .background_summary
+            .as_deref()
+            .is_some_and(|summary| !summary.trim().is_empty())
+        {
+            parts.push("bg".to_string());
+        }
+
+        if parts.is_empty() {
+            "idle".to_string()
+        } else {
+            parts.join(" · ")
+        }
     }
 
     fn scroll_down(&mut self, visible_rows: usize, line_count: usize) {
@@ -241,8 +334,17 @@ fn push_gap(lines: &mut Vec<Line<'static>>) {
     }
 }
 
-fn push_section(lines: &mut Vec<Line<'static>>, title: &str) {
-    lines.push(Line::from(vec!["• ".dim(), title.to_string().bold()]));
+fn push_section_with_summary(lines: &mut Vec<Line<'static>>, title: &str, summary: &str) {
+    lines.push(Line::from(vec![
+        "• ".dim(),
+        title.to_string().bold(),
+        format!(" · {summary}").dim(),
+    ]));
+}
+
+fn pluralize(count: usize, singular: &str, plural: &str) -> String {
+    let noun = if count == 1 { singular } else { plural };
+    format!("{count} {noun}")
 }
 
 fn wrap_dimmed(text: &str, width: u16, indent: &'static str) -> Vec<Line<'static>> {
@@ -260,12 +362,13 @@ fn wrap_checklist_item(item: &WorkStatePlanItem, width: u16) -> Vec<Line<'static
         WorkStateStepStatus::InProgress => ("  › ", "active"),
         WorkStateStepStatus::Pending => ("  - ", "pending"),
     };
-    let line = match style {
-        "completed" => Line::from(item.step.clone().dim()),
-        "active" => Line::from(item.step.clone().cyan().bold()),
-        "pending" => Line::from(item.step.clone().dim()),
-        _ => Line::from(item.step.clone()),
+    let step_span = match style {
+        "completed" => item.step.clone().dim(),
+        "active" => item.step.clone().cyan().bold(),
+        "pending" => item.step.clone().dim(),
+        _ => item.step.clone().into(),
     };
+    let line = Line::from(vec![format!("{} · ", item.status.label()).dim(), step_span]);
     adaptive_wrap_lines(
         std::iter::once(line),
         RtOptions::new(width as usize)

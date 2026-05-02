@@ -1,22 +1,26 @@
 ---
 source: tui/src/bottom_pane/work_state_view.rs
-assertion_line: 372
 expression: "render(&view, 60)"
 ---
 Buffer {
-    area: Rect { x: 0, y: 0, width: 60, height: 3 },
+    area: Rect { x: 0, y: 0, width: 60, height: 4 },
     content: [
-        "> Work state  esc close                                     ",
+        "> Work state  idle  esc close                               ",
         "                                                            ",
-        "  No active or recent work state for this thread.           ",
+        "  No active plan, queued input, subagents, or background    ",
+        "  terminals.                                                ",
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 12, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 14, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 23, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 18, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 20, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 29, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 49, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 56, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 12, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

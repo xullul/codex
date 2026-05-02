@@ -26,6 +26,16 @@ impl SubagentActivityState {
         matches!(self, Self::Pending | Self::Running)
     }
 
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "queued",
+            Self::Running => "running",
+            Self::Completed => "done",
+            Self::Failed => "failed",
+            Self::Interrupted => "stopped",
+        }
+    }
+
     fn prefix(self) -> Span<'static> {
         match self {
             Self::Pending => "  - ".dim(),
@@ -92,7 +102,13 @@ impl SubagentActivity {
         };
 
         let mut lines = vec![truncate_line_with_ellipsis_if_overflow(
-            vec!["• ".dim(), "Subagents".bold(), status_text.dim()].into(),
+            vec![
+                "• ".dim(),
+                "Subagents".bold(),
+                status_text.dim(),
+                " · /work".dim(),
+            ]
+            .into(),
             usize::from(width),
         )];
 
@@ -117,12 +133,17 @@ impl SubagentActivity {
 }
 
 fn render_row(row: &SubagentActivityRow, width: u16) -> Line<'static> {
+    let summary_matches_state = row.summary.trim().eq_ignore_ascii_case(row.state.label());
     let mut spans = vec![
         row.state.prefix(),
         Span::from(row.label.clone()).cyan().bold(),
-        " · ".dim(),
-        row.state.summary_style(&row.summary),
     ];
+    if summary_matches_state {
+        spans.push(" · ".dim());
+    } else {
+        spans.push(format!(" · {} · ", row.state.label()).dim());
+    }
+    spans.push(row.state.summary_style(&row.summary));
     if let Some(token_summary) = row
         .token_summary
         .as_ref()

@@ -9,6 +9,8 @@ Rules:
    - Investigate only the question you were assigned.
    - Prefer `rg`, `rg --files`, and focused file reads.
    - Do not edit files, run formatters, stage changes, commit, or push.
+   - Do not spawn or manage other agents.
+   - Treat build, test, and runtime commands as optional evidence-gathering only; run them only when the parent explicitly asked for that verification.
 
 2. Evidence:
    - Ground findings in concrete file paths, symbols, and behavior.

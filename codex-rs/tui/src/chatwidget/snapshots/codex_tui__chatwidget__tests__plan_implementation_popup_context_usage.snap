@@ -2,10 +2,11 @@
 source: tui/src/chatwidget/tests/plan_mode.rs
 expression: popup
 ---
-  Implement this plan?
+  Ready to implement this plan?
+  Choose how to leave Plan mode. The approved plan stays available in /work.
 
-› 1. Yes, implement this plan          Switch to Default and start coding.
-  2. Yes, clear context and implement  Fresh thread. Context: 89% used.
-  3. No, stay in Plan mode             Continue planning with the model.
+› 1. Implement now              Switch to Default mode and start coding.
+  2. Start fresh and implement  Fresh thread. Context: 89% used.
+  3. Keep planning              Stay in Plan mode with the current thread.
 
   Press enter to confirm or esc to go back

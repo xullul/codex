@@ -84,6 +84,7 @@ impl PlanChecklist {
             "• ".dim(),
             "Plan".bold(),
             format!(" {completed}/{total} complete").dim(),
+            " · /work".dim(),
         ])];
         for item in &items {
             lines.extend(wrap_step(item, width));
