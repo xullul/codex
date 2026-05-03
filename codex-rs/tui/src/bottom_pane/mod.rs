@@ -160,7 +160,7 @@ pub(crate) use selection_tabs::SelectionTab;
 /// Keeping a single value ensures Ctrl+C and Ctrl+D behave identically.
 pub(crate) const QUIT_SHORTCUT_TIMEOUT: Duration = Duration::from_secs(1);
 
-const APPROVAL_PROMPT_TYPING_IDLE_DELAY: Duration = Duration::from_secs(1);
+const PROMPT_TYPING_IDLE_DELAY: Duration = Duration::from_secs(1);
 
 /// Whether Ctrl+C/Ctrl+D require a second press to quit.
 ///
@@ -201,9 +201,44 @@ fn pluralize_count(count: usize, singular: &str) -> String {
     }
 }
 
-struct DelayedApprovalRequest {
-    request: ApprovalRequest,
-    features: Features,
+enum DelayedPromptRequest {
+    Approval {
+        request: ApprovalRequest,
+        features: Features,
+    },
+    UserInput(RequestUserInputEvent),
+    McpServerElicitation(McpServerElicitationFormRequest),
+}
+
+impl DelayedPromptRequest {
+    fn matches_resolved_request(&self, request: &ResolvedAppServerRequest) -> bool {
+        match self {
+            DelayedPromptRequest::Approval {
+                request: approval, ..
+            } => approval.matches_resolved_request(request),
+            DelayedPromptRequest::UserInput(user_input) => {
+                matches!(
+                    request,
+                    ResolvedAppServerRequest::UserInput { call_id }
+                        if user_input.call_id == *call_id
+                )
+            }
+            DelayedPromptRequest::McpServerElicitation(elicitation) => {
+                matches!(
+                    request,
+                    ResolvedAppServerRequest::McpElicitation {
+                        server_name,
+                        request_id,
+                    } if elicitation.server_name() == server_name
+                        && elicitation.request_id() == request_id
+                )
+            }
+        }
+    }
+}
+
+struct DelayedPrompt {
+    request: DelayedPromptRequest,
     enqueued_at: Instant,
 }
 
@@ -219,7 +254,7 @@ pub(crate) struct BottomPane {
 
     /// Stack of views displayed instead of the composer (e.g. popups/modals).
     view_stack: Vec<Box<dyn BottomPaneView>>,
-    delayed_approval_requests: VecDeque<DelayedApprovalRequest>,
+    delayed_prompt_requests: VecDeque<DelayedPrompt>,
     last_composer_activity_at: Option<Instant>,
 
     app_event_tx: AppEventSender,
@@ -289,7 +324,7 @@ impl BottomPane {
         Self {
             composer,
             view_stack: Vec::new(),
-            delayed_approval_requests: VecDeque::new(),
+            delayed_prompt_requests: VecDeque::new(),
             last_composer_activity_at: None,
             app_event_tx,
             frame_requester,
@@ -506,10 +541,10 @@ impl BottomPane {
         }
     }
 
-    fn approval_prompt_delay_remaining(&self, now: Instant) -> Option<Duration> {
+    fn prompt_delay_remaining(&self, now: Instant) -> Option<Duration> {
         self.last_composer_activity_at.and_then(|last_activity_at| {
             last_activity_at
-                .checked_add(APPROVAL_PROMPT_TYPING_IDLE_DELAY)
+                .checked_add(PROMPT_TYPING_IDLE_DELAY)
                 .and_then(|show_at| show_at.checked_duration_since(now))
                 .filter(|delay| !delay.is_zero())
         })
@@ -517,41 +552,73 @@ impl BottomPane {
 
     fn record_composer_activity_at(&mut self, now: Instant) {
         self.last_composer_activity_at = Some(now);
-        if !self.delayed_approval_requests.is_empty()
-            && let Some(delay) = self.approval_prompt_delay_remaining(now)
+        if !self.delayed_prompt_requests.is_empty()
+            && let Some(delay) = self.prompt_delay_remaining(now)
         {
             self.request_redraw_in(delay);
         }
     }
 
-    fn maybe_show_delayed_approval_requests_at(&mut self, now: Instant) {
-        if self.delayed_approval_requests.is_empty() || !self.view_stack.is_empty() {
+    fn maybe_show_delayed_prompts_at(&mut self, now: Instant) {
+        if self.delayed_prompt_requests.is_empty() || !self.view_stack.is_empty() {
             return;
         }
-        if let Some(delay) = self.approval_prompt_delay_remaining(now) {
+        if let Some(delay) = self.prompt_delay_remaining(now) {
             self.request_redraw_in(delay);
             return;
         }
 
-        // Promote the oldest delayed approval once typing has been idle long enough.
-        // `ApprovalOverlay` advances its internal queue with `pop()`, so drain the
-        // remaining delayed approvals from the back to preserve FIFO display order.
-        let Some(first) = self.delayed_approval_requests.pop_front() else {
+        self.promote_next_delayed_prompt();
+    }
+
+    fn promote_next_delayed_prompt(&mut self) {
+        let Some(first) = self.delayed_prompt_requests.pop_front() else {
             return;
         };
-        let mut modal = ApprovalOverlay::new_with_enqueue_time(
-            first.request,
-            first.enqueued_at,
-            self.app_event_tx.clone(),
-            first.features,
-            self.keymap.approval.clone(),
-            self.keymap.list.clone(),
-        );
-        while let Some(delayed) = self.delayed_approval_requests.pop_back() {
-            modal.enqueue_request_at(delayed.request, delayed.enqueued_at);
+        match first.request {
+            DelayedPromptRequest::Approval { request, features } => {
+                let mut modal = ApprovalOverlay::new_with_enqueue_time(
+                    request,
+                    first.enqueued_at,
+                    self.app_event_tx.clone(),
+                    features,
+                    self.keymap.approval.clone(),
+                    self.keymap.list.clone(),
+                );
+                while self.delayed_prompt_requests.front().is_some_and(|delayed| {
+                    matches!(delayed.request, DelayedPromptRequest::Approval { .. })
+                }) {
+                    let Some(DelayedPrompt {
+                        request:
+                            DelayedPromptRequest::Approval {
+                                request,
+                                features: _,
+                            },
+                        enqueued_at,
+                    }) = self.delayed_prompt_requests.pop_front()
+                    else {
+                        break;
+                    };
+                    modal.enqueue_request_at(request, enqueued_at);
+                }
+                self.pause_status_timer_for_modal();
+                self.push_view(Box::new(modal));
+            }
+            DelayedPromptRequest::UserInput(request) => {
+                self.show_user_input_request(request);
+            }
+            DelayedPromptRequest::McpServerElicitation(request) => {
+                self.show_mcp_server_elicitation_request(request);
+            }
         }
-        self.pause_status_timer_for_modal();
-        self.push_view(Box::new(modal));
+    }
+
+    fn delay_prompt_request(&mut self, request: DelayedPromptRequest, now: Instant) {
+        self.delayed_prompt_requests.push_back(DelayedPrompt {
+            request,
+            enqueued_at: now,
+        });
+        self.maybe_show_delayed_prompts_at(now);
     }
 
     /// Forward a key event to the active view or the composer.
@@ -721,7 +788,7 @@ impl BottomPane {
 
     fn pre_draw_tick_at(&mut self, now: Instant) {
         self.composer.sync_popups();
-        self.maybe_show_delayed_approval_requests_at(now);
+        self.maybe_show_delayed_prompts_at(now);
     }
 
     /// Replace the composer text with `text`.
@@ -1136,9 +1203,18 @@ impl BottomPane {
         {
             return Some(summary);
         }
-        let delayed = self.delayed_approval_requests.len();
+        let delayed = self.delayed_prompt_requests.len();
         let inactive_threads = self.pending_thread_approvals.len();
-        let oldest_wait = self.delayed_approval_requests.front().map(|request| {
+        let delayed_item_name = if self
+            .delayed_prompt_requests
+            .iter()
+            .all(|delayed| matches!(delayed.request, DelayedPromptRequest::Approval { .. }))
+        {
+            "approval"
+        } else {
+            "prompt"
+        };
+        let oldest_wait = self.delayed_prompt_requests.front().map(|request| {
             format!(
                 "; oldest {}",
                 crate::status_indicator_widget::fmt_elapsed_compact(
@@ -1150,7 +1226,7 @@ impl BottomPane {
             (0, 0) => None,
             (delayed, 0) => Some(format!(
                 "{} waiting in this thread{}",
-                pluralize_count(delayed, "approval"),
+                pluralize_count(delayed, delayed_item_name),
                 oldest_wait.unwrap_or_default()
             )),
             (0, inactive_threads) => Some(format!(
@@ -1159,7 +1235,7 @@ impl BottomPane {
             )),
             (delayed, inactive_threads) => Some(format!(
                 "{} waiting here{}; {} with pending approvals",
-                pluralize_count(delayed, "approval"),
+                pluralize_count(delayed, delayed_item_name),
                 oldest_wait.unwrap_or_default(),
                 pluralize_count(inactive_threads, "inactive thread")
             )),
@@ -1277,16 +1353,14 @@ impl BottomPane {
         };
 
         let now = Instant::now();
-        if !self.delayed_approval_requests.is_empty()
-            || self.approval_prompt_delay_remaining(now).is_some()
-        {
-            self.delayed_approval_requests
-                .push_back(DelayedApprovalRequest {
+        if !self.delayed_prompt_requests.is_empty() || self.prompt_delay_remaining(now).is_some() {
+            self.delay_prompt_request(
+                DelayedPromptRequest::Approval {
                     request,
                     features: features.clone(),
-                    enqueued_at: now,
-                });
-            self.maybe_show_delayed_approval_requests_at(now);
+                },
+                now,
+            );
         } else {
             // No recent composer activity, so show the approval modal immediately.
             let modal = ApprovalOverlay::new(
@@ -1301,20 +1375,7 @@ impl BottomPane {
         }
     }
 
-    /// Called when the agent requests user input.
-    pub fn push_user_input_request(&mut self, request: RequestUserInputEvent) {
-        let request = if let Some(view) = self.view_stack.last_mut() {
-            match view.try_consume_user_input_request(request) {
-                Some(request) => request,
-                None => {
-                    self.request_redraw();
-                    return;
-                }
-            }
-        } else {
-            request
-        };
-
+    fn show_user_input_request(&mut self, request: RequestUserInputEvent) {
         let modal = RequestUserInputOverlay::new(
             request,
             self.app_event_tx.clone(),
@@ -1330,22 +1391,7 @@ impl BottomPane {
         self.push_view(Box::new(modal));
     }
 
-    pub(crate) fn push_mcp_server_elicitation_request(
-        &mut self,
-        request: McpServerElicitationFormRequest,
-    ) {
-        let request = if let Some(view) = self.view_stack.last_mut() {
-            match view.try_consume_mcp_server_elicitation_request(request) {
-                Some(request) => request,
-                None => {
-                    self.request_redraw();
-                    return;
-                }
-            }
-        } else {
-            request
-        };
-
+    fn show_mcp_server_elicitation_request(&mut self, request: McpServerElicitationFormRequest) {
         if let Some(tool_suggestion) = request.tool_suggestion()
             && let Some(install_url) = tool_suggestion.install_url.clone()
         {
@@ -1409,14 +1455,60 @@ impl BottomPane {
         self.push_view(Box::new(modal));
     }
 
+    /// Called when the agent requests user input.
+    pub fn push_user_input_request(&mut self, request: RequestUserInputEvent) {
+        let request = if let Some(view) = self.view_stack.last_mut() {
+            match view.try_consume_user_input_request(request) {
+                Some(request) => request,
+                None => {
+                    self.request_redraw();
+                    return;
+                }
+            }
+        } else {
+            request
+        };
+
+        let now = Instant::now();
+        if !self.delayed_prompt_requests.is_empty() || self.prompt_delay_remaining(now).is_some() {
+            self.delay_prompt_request(DelayedPromptRequest::UserInput(request), now);
+        } else {
+            self.show_user_input_request(request);
+        }
+    }
+
+    pub(crate) fn push_mcp_server_elicitation_request(
+        &mut self,
+        request: McpServerElicitationFormRequest,
+    ) {
+        let request = if let Some(view) = self.view_stack.last_mut() {
+            match view.try_consume_mcp_server_elicitation_request(request) {
+                Some(request) => request,
+                None => {
+                    self.request_redraw();
+                    return;
+                }
+            }
+        } else {
+            request
+        };
+
+        let now = Instant::now();
+        if !self.delayed_prompt_requests.is_empty() || self.prompt_delay_remaining(now).is_some() {
+            self.delay_prompt_request(DelayedPromptRequest::McpServerElicitation(request), now);
+        } else {
+            self.show_mcp_server_elicitation_request(request);
+        }
+    }
+
     pub(crate) fn dismiss_app_server_request(
         &mut self,
         request: &ResolvedAppServerRequest,
     ) -> bool {
-        let delayed_len = self.delayed_approval_requests.len();
-        self.delayed_approval_requests
+        let delayed_len = self.delayed_prompt_requests.len();
+        self.delayed_prompt_requests
             .retain(|delayed| !delayed.request.matches_resolved_request(request));
-        let delayed_changed = self.delayed_approval_requests.len() != delayed_len;
+        let delayed_changed = self.delayed_prompt_requests.len() != delayed_len;
 
         if self.view_stack.is_empty() {
             if delayed_changed {
@@ -1686,8 +1778,13 @@ mod tests {
     use crate::status_indicator_widget::StatusDetailsCapitalization;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
+    use codex_protocol::approvals::ElicitationRequest;
+    use codex_protocol::approvals::ElicitationRequestEvent;
+    use codex_protocol::mcp::RequestId as McpRequestId;
     use codex_protocol::protocol::ReviewDecision;
     use codex_protocol::protocol::SkillScope;
+    use codex_protocol::request_user_input::RequestUserInputQuestion;
+    use codex_protocol::request_user_input::RequestUserInputQuestionOption;
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyEventKind;
@@ -1753,6 +1850,57 @@ mod tests {
             network_approval_context: None,
             additional_permissions: None,
         }
+    }
+
+    fn user_input_request(call_id: &str) -> RequestUserInputEvent {
+        RequestUserInputEvent {
+            call_id: call_id.to_string(),
+            turn_id: "turn-1".to_string(),
+            questions: vec![RequestUserInputQuestion {
+                id: "choice".to_string(),
+                header: "Choice".to_string(),
+                question: "Choose an option.".to_string(),
+                is_other: false,
+                is_secret: false,
+                options: Some(vec![
+                    RequestUserInputQuestionOption {
+                        label: "Option 1".to_string(),
+                        description: "First choice.".to_string(),
+                    },
+                    RequestUserInputQuestionOption {
+                        label: "Option 2".to_string(),
+                        description: "Second choice.".to_string(),
+                    },
+                ]),
+            }],
+        }
+    }
+
+    fn mcp_elicitation_request(request_id: &str) -> McpServerElicitationFormRequest {
+        McpServerElicitationFormRequest::from_event(
+            codex_protocol::ThreadId::new(),
+            ElicitationRequestEvent {
+                turn_id: Some("turn-1".to_string()),
+                server_name: "server-1".to_string(),
+                id: McpRequestId::String(request_id.to_string()),
+                request: ElicitationRequest::Form {
+                    meta: None,
+                    message: "Configure the tool.".to_string(),
+                    requested_schema: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean",
+                                "title": "Enabled",
+                                "description": "Enable the tool.",
+                            }
+                        },
+                        "required": ["enabled"],
+                    }),
+                },
+            },
+        )
+        .expect("expected supported MCP elicitation request")
     }
 
     #[derive(Default)]
@@ -1914,7 +2062,7 @@ mod tests {
         pane.push_approval_request(exec_request(), &features);
 
         assert_eq!(pane.view_stack.len(), 1);
-        assert!(pane.delayed_approval_requests.is_empty());
+        assert!(pane.delayed_prompt_requests.is_empty());
     }
 
     #[test]
@@ -1929,17 +2077,15 @@ mod tests {
         pane.push_approval_request(exec_request(), &features);
 
         assert!(pane.view_stack.is_empty());
-        assert_eq!(pane.delayed_approval_requests.len(), 1);
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
 
-        pane.pre_draw_tick_at(
-            now + APPROVAL_PROMPT_TYPING_IDLE_DELAY - Duration::from_millis(/*millis*/ 1),
-        );
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY - Duration::from_millis(/*millis*/ 1));
         assert!(pane.view_stack.is_empty());
-        assert_eq!(pane.delayed_approval_requests.len(), 1);
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
 
-        pane.pre_draw_tick_at(now + APPROVAL_PROMPT_TYPING_IDLE_DELAY);
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY);
         assert_eq!(pane.view_stack.len(), 1);
-        assert!(pane.delayed_approval_requests.is_empty());
+        assert!(pane.delayed_prompt_requests.is_empty());
     }
 
     #[test]
@@ -1955,13 +2101,13 @@ mod tests {
         let continued_activity = first_activity + Duration::from_millis(/*millis*/ 750);
         pane.record_composer_activity_at(continued_activity);
 
-        pane.pre_draw_tick_at(first_activity + APPROVAL_PROMPT_TYPING_IDLE_DELAY);
+        pane.pre_draw_tick_at(first_activity + PROMPT_TYPING_IDLE_DELAY);
         assert!(pane.view_stack.is_empty());
-        assert_eq!(pane.delayed_approval_requests.len(), 1);
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
 
-        pane.pre_draw_tick_at(continued_activity + APPROVAL_PROMPT_TYPING_IDLE_DELAY);
+        pane.pre_draw_tick_at(continued_activity + PROMPT_TYPING_IDLE_DELAY);
         assert_eq!(pane.view_stack.len(), 1);
-        assert!(pane.delayed_approval_requests.is_empty());
+        assert!(pane.delayed_prompt_requests.is_empty());
     }
 
     #[test]
@@ -1978,7 +2124,7 @@ mod tests {
 
         assert_eq!(pane.composer_text(), "ya");
         assert!(pane.view_stack.is_empty());
-        assert_eq!(pane.delayed_approval_requests.len(), 1);
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
         while let Ok(event) = rx.try_recv() {
             assert!(
                 !matches!(event, AppEvent::SubmitThreadOp { .. }),
@@ -1997,7 +2143,7 @@ mod tests {
         pane.last_composer_activity_at = Some(now);
         pane.push_approval_request(exec_request(), &features);
 
-        pane.pre_draw_tick_at(now + APPROVAL_PROMPT_TYPING_IDLE_DELAY);
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY);
         pane.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
         let mut approval_decision = None;
@@ -2011,6 +2157,93 @@ mod tests {
             }
         }
         assert_eq!(approval_decision, Some(ReviewDecision::Approved));
+    }
+
+    #[test]
+    fn user_input_request_is_delayed_after_recent_typing() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let now = Instant::now();
+        pane.last_composer_activity_at = Some(now);
+
+        pane.push_user_input_request(user_input_request("input-1"));
+
+        assert!(pane.view_stack.is_empty());
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
+
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY - Duration::from_millis(/*millis*/ 1));
+        assert!(pane.view_stack.is_empty());
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
+
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY);
+        assert_eq!(pane.view_stack.len(), 1);
+        assert!(pane.delayed_prompt_requests.is_empty());
+    }
+
+    #[test]
+    fn mcp_elicitation_request_is_delayed_after_recent_typing() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let now = Instant::now();
+        pane.last_composer_activity_at = Some(now);
+
+        pane.push_mcp_server_elicitation_request(mcp_elicitation_request("request-1"));
+
+        assert!(pane.view_stack.is_empty());
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
+
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY);
+        assert_eq!(pane.view_stack.len(), 1);
+        assert!(pane.delayed_prompt_requests.is_empty());
+    }
+
+    #[test]
+    fn typed_user_input_prompt_shortcuts_during_delay_stay_in_composer() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane_with_disable_paste_burst(tx, /*disable_paste_burst*/ true);
+        pane.last_composer_activity_at = Some(Instant::now());
+        pane.push_user_input_request(user_input_request("input-1"));
+
+        pane.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        pane.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+
+        assert_eq!(pane.composer_text(), "12");
+        assert!(pane.view_stack.is_empty());
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
+    }
+
+    #[test]
+    fn resolved_app_server_request_prunes_delayed_user_input_and_mcp_prompts() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let now = Instant::now();
+        pane.last_composer_activity_at = Some(now);
+
+        pane.push_user_input_request(user_input_request("input-1"));
+        pane.push_mcp_server_elicitation_request(mcp_elicitation_request("request-1"));
+        assert_eq!(pane.delayed_prompt_requests.len(), 2);
+
+        assert!(
+            pane.dismiss_app_server_request(&ResolvedAppServerRequest::UserInput {
+                call_id: "input-1".to_string(),
+            })
+        );
+        assert_eq!(pane.delayed_prompt_requests.len(), 1);
+
+        assert!(
+            pane.dismiss_app_server_request(&ResolvedAppServerRequest::McpElicitation {
+                server_name: "server-1".to_string(),
+                request_id: McpRequestId::String("request-1".to_string()),
+            })
+        );
+        assert!(pane.delayed_prompt_requests.is_empty());
+
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY);
+        assert!(pane.view_stack.is_empty());
     }
 
     #[test]
@@ -2028,9 +2261,9 @@ mod tests {
                 id: "1".to_string(),
             })
         );
-        assert!(pane.delayed_approval_requests.is_empty());
+        assert!(pane.delayed_prompt_requests.is_empty());
 
-        pane.pre_draw_tick_at(now + APPROVAL_PROMPT_TYPING_IDLE_DELAY);
+        pane.pre_draw_tick_at(now + PROMPT_TYPING_IDLE_DELAY);
         assert!(pane.view_stack.is_empty());
     }
 
