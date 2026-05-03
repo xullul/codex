@@ -86,6 +86,10 @@ pub(crate) struct WorkProgressRow {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WorkStateSnapshot {
+    pub(crate) active_phase: Option<String>,
+    pub(crate) active_tool_summary: Option<String>,
+    pub(crate) pending_approval_summary: Option<String>,
+    pub(crate) continuity_status: Option<String>,
     pub(crate) proposed_plan_markdown: Option<String>,
     pub(crate) checklist: Vec<WorkStatePlanItem>,
     pub(crate) progress: Vec<WorkProgressRow>,
@@ -129,6 +133,56 @@ impl WorkStateView {
         ])];
 
         let mut has_content = false;
+        if self
+            .snapshot
+            .active_phase
+            .as_deref()
+            .is_some_and(|phase| !phase.trim().is_empty())
+            || self
+                .snapshot
+                .active_tool_summary
+                .as_deref()
+                .is_some_and(|summary| !summary.trim().is_empty())
+            || self
+                .snapshot
+                .pending_approval_summary
+                .as_deref()
+                .is_some_and(|summary| !summary.trim().is_empty())
+            || self
+                .snapshot
+                .continuity_status
+                .as_deref()
+                .is_some_and(|status| !status.trim().is_empty())
+        {
+            has_content = true;
+            push_gap(&mut lines);
+            push_section_with_summary(&mut lines, "Current state", "live context");
+            push_optional_state_row(
+                &mut lines,
+                width,
+                "Phase",
+                self.snapshot.active_phase.as_deref(),
+            );
+            push_optional_state_row(
+                &mut lines,
+                width,
+                "Active tool",
+                self.snapshot.active_tool_summary.as_deref(),
+            );
+            push_optional_state_row(
+                &mut lines,
+                width,
+                "Approval",
+                self.snapshot.pending_approval_summary.as_deref(),
+            );
+            push_optional_state_row(
+                &mut lines,
+                width,
+                "Continuity",
+                self.snapshot.continuity_status.as_deref(),
+            );
+        }
+
         if let Some(markdown) = self
             .snapshot
             .proposed_plan_markdown
@@ -302,6 +356,22 @@ impl WorkStateView {
         let mut parts = Vec::new();
         if self
             .snapshot
+            .active_phase
+            .as_deref()
+            .is_some_and(|phase| !phase.trim().is_empty())
+        {
+            parts.push("live".to_string());
+        }
+        if self
+            .snapshot
+            .pending_approval_summary
+            .as_deref()
+            .is_some_and(|summary| !summary.trim().is_empty())
+        {
+            parts.push("approval".to_string());
+        }
+        if self
+            .snapshot
             .proposed_plan_markdown
             .as_deref()
             .is_some_and(|markdown| !markdown.trim().is_empty())
@@ -392,6 +462,29 @@ fn wrap_dimmed(text: &str, width: u16, indent: &'static str) -> Vec<Line<'static
             .initial_indent(Line::from(indent.dim()))
             .subsequent_indent(Line::from(indent)),
     )
+}
+
+fn push_optional_state_row(
+    lines: &mut Vec<Line<'static>>,
+    width: u16,
+    label: &str,
+    value: Option<&str>,
+) {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let line = Line::from(vec![
+        "  - ".dim(),
+        label.to_string().into(),
+        ": ".dim(),
+        value.to_string().dim(),
+    ]);
+    lines.extend(adaptive_wrap_lines(
+        std::iter::once(line),
+        RtOptions::new(width as usize)
+            .initial_indent("".into())
+            .subsequent_indent("    ".into()),
+    ));
 }
 
 fn wrap_checklist_item(item: &WorkStatePlanItem, width: u16) -> Vec<Line<'static>> {
@@ -516,6 +609,13 @@ mod tests {
     #[test]
     fn renders_complete_state() {
         let view = WorkStateView::new(WorkStateSnapshot {
+            active_phase: Some("Working".to_string()),
+            active_tool_summary: Some("reading TUI state surfaces".to_string()),
+            pending_approval_summary: Some("1 command approval waiting".to_string()),
+            continuity_status: Some(
+                "Checklist, proposed plan, queued input, and subagent rows are retained for resume"
+                    .to_string(),
+            ),
             proposed_plan_markdown: Some(
                 "# Plan\n\n- Inspect current surfaces\n- Add a unified work panel".to_string(),
             ),

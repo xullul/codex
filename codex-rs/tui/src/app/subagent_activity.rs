@@ -106,7 +106,14 @@ impl SubagentActivityTracker {
                     ),
                 )
             }
-            ServerNotification::TurnCompleted(_) => self.remove(thread_id),
+            ServerNotification::TurnCompleted(notification) => self.upsert(
+                thread_id,
+                label,
+                turn_completed_update(
+                    notification.turn.status.clone(),
+                    notification.turn.error.as_ref(),
+                ),
+            ),
             ServerNotification::ThreadClosed(_) => self.remove(thread_id),
             _ => false,
         }
@@ -433,6 +440,7 @@ fn semantic_command_status(
         &parsed,
         command_source_to_core(source),
         /*interaction_input*/ None,
+        /*progress*/ None,
     )
 }
 
@@ -735,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_subagent_turn_removes_activity_row() {
+    fn terminal_subagent_turn_keeps_completed_activity_row() {
         let mut tracker = SubagentActivityTracker::default();
         let primary_id = thread_id(1);
         let agent_id = thread_id(2);
@@ -778,6 +786,15 @@ mod tests {
             ),
         );
 
-        assert_eq!(tracker.rows(Some(primary_id), Some(primary_id)), Vec::new());
+        assert_eq!(
+            tracker.rows(Some(primary_id), Some(primary_id)),
+            vec![SubagentActivityRow {
+                label: "Huygens [explorer]".to_string(),
+                state: SubagentActivityState::Completed,
+                summary: "finished".to_string(),
+                detail: None,
+                token_summary: None,
+            }]
+        );
     }
 }

@@ -622,6 +622,18 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                 ]));
                 header.push(Line::from(""));
             }
+            header.push(Line::from(vec![
+                "Why approval is needed: ".into(),
+                approval_reason_summary(request).dim(),
+            ]));
+            header.push(Line::from(vec![
+                "Scope: ".into(),
+                approval_scope_summary(request).cyan(),
+            ]));
+            if let Some(risk) = approval_risk_summary(request) {
+                header.push(Line::from(vec!["Risk hint: ".into(), risk.red()]));
+            }
+            header.push(Line::from(""));
             if let Some(reason) = reason {
                 header.push(Line::from(vec!["Reason: ".into(), reason.clone().italic()]));
                 header.push(Line::from(""));
@@ -659,6 +671,18 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                 ]));
                 header.push(Line::from(""));
             }
+            header.push(Line::from(vec![
+                "Why approval is needed: ".into(),
+                approval_reason_summary(request).dim(),
+            ]));
+            header.push(Line::from(vec![
+                "Scope: ".into(),
+                approval_scope_summary(request).cyan(),
+            ]));
+            if let Some(risk) = approval_risk_summary(request) {
+                header.push(Line::from(vec!["Risk hint: ".into(), risk.red()]));
+            }
+            header.push(Line::from(""));
             if let Some(reason) = reason {
                 header.push(Line::from(vec!["Reason: ".into(), reason.clone().italic()]));
                 header.push(Line::from(""));
@@ -682,6 +706,20 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                     "Thread: ".into(),
                     thread_label.clone().bold(),
                 ])));
+            }
+            if !header.is_empty() {
+                header.push(Box::new(Line::from("")));
+            }
+            header.push(Box::new(Line::from(vec![
+                "Why approval is needed: ".into(),
+                approval_reason_summary(request).dim(),
+            ])));
+            header.push(Box::new(Line::from(vec![
+                "Scope: ".into(),
+                approval_scope_summary(request).cyan(),
+            ])));
+            if let Some(risk) = approval_risk_summary(request) {
+                header.push(Box::new(Line::from(vec!["Risk hint: ".into(), risk.red()])));
             }
             if let Some(reason) = reason
                 && !reason.is_empty()
@@ -713,6 +751,15 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                 ]));
                 lines.push(Line::from(""));
             }
+            lines.push(Line::from(vec![
+                "Why approval is needed: ".into(),
+                approval_reason_summary(request).dim(),
+            ]));
+            lines.push(Line::from(vec![
+                "Scope: ".into(),
+                approval_scope_summary(request).cyan(),
+            ]));
+            lines.push(Line::from(""));
             lines.extend([
                 Line::from(vec!["Server: ".into(), server_name.clone().bold()]),
                 Line::from(""),
@@ -721,6 +768,101 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
             let header = Paragraph::new(lines).wrap(Wrap { trim: false });
             Box::new(header)
         }
+    }
+}
+
+fn approval_reason_summary(request: &ApprovalRequest) -> String {
+    match request {
+        ApprovalRequest::Exec {
+            network_approval_context: Some(context),
+            ..
+        } => format!("network access to {}", context.host),
+        ApprovalRequest::Exec {
+            additional_permissions: Some(_),
+            ..
+        } => "the command requested broader permissions than the current profile".to_string(),
+        ApprovalRequest::Exec { .. } => {
+            "the command needs explicit approval under the current policy".to_string()
+        }
+        ApprovalRequest::Permissions { .. } => {
+            "the agent requested a permission grant before continuing".to_string()
+        }
+        ApprovalRequest::ApplyPatch { .. } => {
+            "the agent wants to apply file edits that require confirmation".to_string()
+        }
+        ApprovalRequest::McpElicitation { server_name, .. } => {
+            format!("{server_name} requested confirmation or input")
+        }
+    }
+}
+
+fn approval_scope_summary(request: &ApprovalRequest) -> String {
+    match request {
+        ApprovalRequest::Exec {
+            network_approval_context: Some(context),
+            ..
+        } => format!("network policy amendment for {}", context.host),
+        ApprovalRequest::Exec {
+            additional_permissions: Some(additional_permissions),
+            ..
+        } => format_additional_permissions_rule(additional_permissions)
+            .unwrap_or_else(|| "additional command permissions".to_string()),
+        ApprovalRequest::Exec { command, .. } => {
+            format!("one command: {}", strip_bash_lc_and_escape(command))
+        }
+        ApprovalRequest::Permissions { permissions, .. } => {
+            format_requested_permissions_rule(permissions)
+                .unwrap_or_else(|| "permission profile change".to_string())
+        }
+        ApprovalRequest::ApplyPatch { cwd, changes, .. } => format!(
+            "{} in {}",
+            pluralize_count(changes.len(), "file edit"),
+            cwd.display()
+        ),
+        ApprovalRequest::McpElicitation { server_name, .. } => {
+            format!("one request from MCP server {server_name}")
+        }
+    }
+}
+
+fn approval_risk_summary(request: &ApprovalRequest) -> Option<String> {
+    match request {
+        ApprovalRequest::Exec {
+            network_approval_context: Some(_),
+            ..
+        } => Some("network access can contact external services".to_string()),
+        ApprovalRequest::Exec { command, .. } => {
+            let command = strip_bash_lc_and_escape(command).to_ascii_lowercase();
+            let destructive = [
+                "rm ",
+                "remove-item",
+                "del ",
+                "delete",
+                "rmdir",
+                "git clean",
+                "git reset",
+            ]
+            .iter()
+            .any(|needle| command.contains(needle));
+            destructive.then(|| "command appears destructive; review paths and flags".to_string())
+        }
+        ApprovalRequest::Permissions { permissions, .. } => {
+            format_requested_permissions_rule(permissions)
+                .is_some_and(|rule| rule.contains("network"))
+                .then(|| "grant may allow future network access".to_string())
+        }
+        ApprovalRequest::ApplyPatch { changes, .. } => {
+            (!changes.is_empty()).then(|| "file edits will modify the working tree".to_string())
+        }
+        ApprovalRequest::McpElicitation { .. } => None,
+    }
+}
+
+fn pluralize_count(count: usize, singular: &str) -> String {
+    if count == 1 {
+        format!("{count} {singular}")
+    } else {
+        format!("{count} {singular}s")
     }
 }
 

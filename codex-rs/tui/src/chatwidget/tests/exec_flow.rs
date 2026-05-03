@@ -1065,6 +1065,14 @@ async fn image_generation_call_adds_history_cell() {
         }),
     });
 
+    let expected_saved_path = test_path_buf("/tmp/ig-1.png").abs().display().to_string();
+    let progress = chat
+        .latest_work_state_progress
+        .last()
+        .expect("image generation should record work progress");
+    assert_eq!(progress.label, "image generated");
+    assert_eq!(progress.detail, expected_saved_path);
+
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected a single history cell");
     let platform_file_url = url::Url::from_file_path(test_path_buf("/tmp/ig-1.png"))
@@ -2392,6 +2400,12 @@ async fn apply_patch_events_emit_history_cells() {
     });
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected apply block cell to be sent");
+    assert_eq!(
+        chat.latest_work_state_progress
+            .last()
+            .map(|row| (row.label.as_str(), row.detail.as_str())),
+        Some(("editing files", "1 file changed"))
+    );
     let blob = lines_to_single_string(cells.last().unwrap());
     assert!(
         blob.contains("Added foo.txt") || blob.contains("Edited foo.txt"),
@@ -2423,6 +2437,12 @@ async fn apply_patch_events_emit_history_cells() {
     assert!(
         cells.is_empty(),
         "no success cell should be emitted anymore"
+    );
+    assert_eq!(
+        chat.latest_work_state_progress
+            .last()
+            .map(|row| (row.label.as_str(), row.detail.as_str())),
+        Some(("edited files", "1 file changed"))
     );
 }
 

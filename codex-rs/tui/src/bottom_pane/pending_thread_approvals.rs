@@ -32,6 +32,10 @@ impl PendingThreadApprovals {
         self.threads.is_empty()
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.threads.len()
+    }
+
     #[cfg(test)]
     pub(crate) fn threads(&self) -> &[String] {
         &self.threads

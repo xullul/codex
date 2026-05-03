@@ -192,6 +192,14 @@ pub(crate) use experimental_features_view::ExperimentalFeaturesView;
 pub(crate) use list_selection_view::SelectionAction;
 pub(crate) use list_selection_view::SelectionItem;
 
+fn pluralize_count(count: usize, singular: &str) -> String {
+    if count == 1 {
+        format!("{count} {singular}")
+    } else {
+        format!("{count} {singular}s")
+    }
+}
+
 struct DelayedApprovalRequest {
     request: ApprovalRequest,
     features: Features,
@@ -1114,6 +1122,27 @@ impl BottomPane {
     #[cfg(test)]
     pub(crate) fn pending_thread_approvals(&self) -> &[String] {
         self.pending_thread_approvals.threads()
+    }
+
+    pub(crate) fn pending_approval_summary(&self) -> Option<String> {
+        let delayed = self.delayed_approval_requests.len();
+        let inactive_threads = self.pending_thread_approvals.len();
+        match (delayed, inactive_threads) {
+            (0, 0) => None,
+            (delayed, 0) => Some(format!(
+                "{} waiting in this thread",
+                pluralize_count(delayed, "approval")
+            )),
+            (0, inactive_threads) => Some(format!(
+                "{} with pending approvals",
+                pluralize_count(inactive_threads, "inactive thread")
+            )),
+            (delayed, inactive_threads) => Some(format!(
+                "{} waiting here; {} with pending approvals",
+                pluralize_count(delayed, "approval"),
+                pluralize_count(inactive_threads, "inactive thread")
+            )),
+        }
     }
 
     /// Update the unified-exec process set and refresh whichever summary surface is active.

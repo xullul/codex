@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::time::Instant;
 
 use codex_protocol::parse_command::ParsedCommand;
@@ -11,6 +12,13 @@ use crate::exec_command::strip_bash_lc_and_escape;
 pub(crate) struct ExecStatusSummary {
     pub(crate) header: String,
     pub(crate) details: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecProgress {
+    pub(crate) elapsed: Duration,
+    pub(crate) output_line_count: usize,
+    pub(crate) recent_output_lines: Vec<String>,
 }
 
 pub(crate) fn combine_exec_status_summaries(
@@ -53,6 +61,7 @@ pub(crate) fn exec_status_summary(
     parsed: &[ParsedCommand],
     source: ExecCommandSource,
     interaction_input: Option<&str>,
+    progress: Option<&ExecProgress>,
 ) -> ExecStatusSummary {
     let command_display = strip_bash_lc_and_escape(command);
 
@@ -60,7 +69,7 @@ pub(crate) fn exec_status_summary(
         ExecCommandSource::UnifiedExecStartup => {
             return ExecStatusSummary {
                 header: "Starting background terminal".to_string(),
-                details: non_empty(command_display),
+                details: status_details(non_empty(command_display), progress),
             };
         }
         ExecCommandSource::UnifiedExecInteraction
@@ -68,13 +77,13 @@ pub(crate) fn exec_status_summary(
         {
             return ExecStatusSummary {
                 header: "Waiting for background terminal".to_string(),
-                details: non_empty(command_display),
+                details: status_details(non_empty(command_display), progress),
             };
         }
         ExecCommandSource::UnifiedExecInteraction if interaction_input.is_some() => {
             return ExecStatusSummary {
                 header: "Interacting with terminal".to_string(),
-                details: non_empty(command_display),
+                details: status_details(non_empty(command_display), progress),
             };
         }
         ExecCommandSource::Agent
@@ -95,13 +104,13 @@ pub(crate) fn exec_status_summary(
     if let Some(summary) = summarize_call(&call, &command_display) {
         return ExecStatusSummary {
             header: summary.verb(/*active*/ true).to_string(),
-            details: summary.detail,
+            details: status_details(summary.detail, progress),
         };
     }
 
     ExecStatusSummary {
         header: fallback_status_header(source).to_string(),
-        details: non_empty(command_display),
+        details: status_details(non_empty(command_display), progress),
     }
 }
 
@@ -118,6 +127,45 @@ fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+fn status_details(base: Option<String>, progress: Option<&ExecProgress>) -> Option<String> {
+    let mut lines = Vec::new();
+    if let Some(base) = base {
+        lines.push(base);
+    }
+    if let Some(progress) = progress.and_then(progress_detail) {
+        lines.push(progress);
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn progress_detail(progress: &ExecProgress) -> Option<String> {
+    if progress.elapsed < Duration::from_secs(2)
+        && progress.output_line_count == 0
+        && progress.recent_output_lines.is_empty()
+    {
+        return None;
+    }
+
+    let mut parts = vec![codex_utils_elapsed::format_duration(progress.elapsed)];
+    if progress.output_line_count > 0 {
+        parts.push(format!("{} lines", progress.output_line_count));
+    }
+    let mut lines = vec![parts.join(" · ")];
+    lines.extend(
+        progress
+            .recent_output_lines
+            .iter()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|line| !line.is_empty())
+            .map(|line| format!("> {line}")),
+    );
+    Some(lines.join("\n"))
+}
+
 fn status_activity_line(summary: &ExecStatusSummary) -> String {
     match summary.details.as_deref().map(compact_status_text) {
         Some(details) if !details.is_empty() => format!("{} {details}", summary.header),
@@ -132,6 +180,7 @@ fn compact_status_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use codex_protocol::parse_command::ParsedCommandActionKind;
     use pretty_assertions::assert_eq;
@@ -155,6 +204,7 @@ mod tests {
                 ],
                 &parsed,
                 ExecCommandSource::Agent,
+                None,
                 None,
             ),
             ExecStatusSummary {
@@ -182,6 +232,7 @@ mod tests {
                 &parsed,
                 ExecCommandSource::Agent,
                 None,
+                None,
             ),
             ExecStatusSummary {
                 header: "Testing".to_string(),
@@ -201,6 +252,7 @@ mod tests {
                 ],
                 &[],
                 ExecCommandSource::UserShell,
+                None,
                 None,
             ),
             ExecStatusSummary {
@@ -222,10 +274,48 @@ mod tests {
                 &[],
                 ExecCommandSource::UnifiedExecInteraction,
                 Some(""),
+                None,
             ),
             ExecStatusSummary {
                 header: "Waiting for background terminal".to_string(),
                 details: Some("npm run dev".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn includes_progress_tail_for_running_command() {
+        let parsed = vec![ParsedCommand::Action {
+            cmd: "cargo test -p codex-tui".to_string(),
+            kind: ParsedCommandActionKind::Test,
+            detail: Some("cargo test -p codex-tui".to_string()),
+        }];
+
+        assert_eq!(
+            exec_status_summary(
+                &[
+                    "bash".to_string(),
+                    "-lc".to_string(),
+                    "cargo test -p codex-tui".to_string()
+                ],
+                &parsed,
+                ExecCommandSource::Agent,
+                None,
+                Some(&ExecProgress {
+                    elapsed: Duration::from_secs(3),
+                    output_line_count: 12,
+                    recent_output_lines: vec![
+                        "running 12 tests".to_string(),
+                        "test status_summary ... ok".to_string(),
+                    ],
+                }),
+            ),
+            ExecStatusSummary {
+                header: "Testing".to_string(),
+                details: Some(
+                    "cargo test -p codex-tui\n3.00s · 12 lines\n> running 12 tests\n> test status_summary ... ok"
+                        .to_string()
+                ),
             }
         );
     }

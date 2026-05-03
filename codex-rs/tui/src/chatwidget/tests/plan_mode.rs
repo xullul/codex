@@ -1662,6 +1662,10 @@ async fn plan_update_renders_history_cell() {
     });
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected plan update cell to be sent");
+    assert_eq!(
+        chat.current_status.details.as_deref(),
+        Some("step 2/3: Implement feature")
+    );
     let blob = lines_to_single_string(cells.last().unwrap());
     assert!(
         blob.contains("Updated Plan"),

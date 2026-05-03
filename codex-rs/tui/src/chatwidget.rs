@@ -362,6 +362,7 @@ use crate::collaboration_modes;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCell;
+use crate::exec_cell::ExecProgress;
 use crate::exec_cell::ExecStatusSummary;
 use crate::exec_cell::combine_exec_status_summaries;
 use crate::exec_cell::exec_status_summary;
@@ -383,6 +384,7 @@ use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::ChatKeymap;
 use crate::keymap::RuntimeKeymap;
+use crate::legacy_core::web_search_detail;
 use crate::mcp_tool_status::McpToolStatusSummary;
 use crate::mcp_tool_status::combine_mcp_tool_status_summaries;
 use crate::mcp_tool_status::mcp_tool_status_summary;
@@ -457,6 +459,44 @@ struct RunningCommand {
     source: ExecCommandSource,
     interaction_input: Option<String>,
     started_order: u64,
+    started_at: Instant,
+    output_line_count: usize,
+    recent_output_lines: Vec<String>,
+}
+
+impl RunningCommand {
+    fn progress(&self) -> ExecProgress {
+        ExecProgress {
+            elapsed: self.started_at.elapsed(),
+            output_line_count: self.output_line_count,
+            recent_output_lines: self.recent_output_lines.clone(),
+        }
+    }
+
+    fn record_output_chunk(&mut self, chunk: &[u8]) {
+        let text = String::from_utf8_lossy(chunk);
+        let lines = text
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            if !text.trim().is_empty() {
+                self.output_line_count = self.output_line_count.saturating_add(1);
+            }
+            return;
+        }
+
+        self.output_line_count = self.output_line_count.saturating_add(lines.len());
+        self.recent_output_lines
+            .extend(lines.into_iter().map(ToString::to_string));
+
+        const MAX_RECENT_OUTPUT_LINES: usize = 3;
+        if self.recent_output_lines.len() > MAX_RECENT_OUTPUT_LINES {
+            let drop_count = self.recent_output_lines.len() - MAX_RECENT_OUTPUT_LINES;
+            self.recent_output_lines.drain(0..drop_count);
+        }
+    }
 }
 
 struct UnifiedExecProcessSummary {
@@ -1061,6 +1101,7 @@ pub(crate) struct ChatWidget {
     saw_plan_item_this_turn: bool,
     // Latest `update_plan` checklist task counts for terminal-title rendering.
     last_plan_progress: Option<(usize, usize)>,
+    latest_plan_in_progress: Option<(usize, usize, String)>,
     // Incremental buffer for streamed plan content.
     plan_delta_buffer: String,
     // True while a plan item is streaming.
@@ -2245,6 +2286,7 @@ impl ChatWidget {
                         &running.parsed_cmd,
                         running.source,
                         running.interaction_input.as_deref(),
+                        Some(&running.progress()),
                     )
                 })
                 .collect(),
@@ -2300,6 +2342,9 @@ impl ChatWidget {
 
     fn restore_status_after_tool_activity(&mut self) {
         if self.refresh_running_mcp_tool_status() || self.refresh_running_exec_status() {
+            return;
+        }
+        if self.refresh_plan_status_if_idle() {
             return;
         }
         self.restore_reasoning_status_header();
@@ -4133,9 +4178,35 @@ impl ChatWidget {
         self.last_plan_progress = (total > 0).then_some((completed, total));
         self.latest_work_state_checklist =
             update.plan.iter().map(WorkStatePlanItem::from).collect();
+        self.latest_plan_in_progress = update
+            .plan
+            .iter()
+            .position(|item| matches!(item.status, StepStatus::InProgress))
+            .map(|index| (index + 1, total, update.plan[index].step.clone()));
         self.bottom_pane.set_plan_checklist(update.plan.clone());
+        self.refresh_plan_status_if_idle();
         self.refresh_status_surfaces();
         self.add_to_history(history_cell::new_plan_update(update));
+    }
+
+    fn refresh_plan_status_if_idle(&mut self) -> bool {
+        if self.running_exec_status().is_some()
+            || self.running_mcp_tool_status().is_some()
+            || self.current_status.is_guardian_review()
+        {
+            return false;
+        }
+
+        let Some((index, total, step)) = self.latest_plan_in_progress.clone() else {
+            return false;
+        };
+        self.set_status(
+            "Working".to_string(),
+            Some(format!("step {index}/{total}: {step}")),
+            StatusDetailsCapitalization::Preserve,
+            /*details_max_lines*/ 1,
+        );
+        true
     }
 
     fn on_repo_intel(&mut self, event: RepoIntelEvent) {
@@ -4187,6 +4258,27 @@ impl ChatWidget {
                 .len()
                 .saturating_sub(MAX_WORK_PROGRESS_ROWS);
             self.latest_work_state_progress.drain(0..extra);
+        }
+    }
+
+    fn add_file_change_work_progress(
+        &mut self,
+        label: &str,
+        changes: &std::collections::HashMap<PathBuf, codex_protocol::protocol::FileChange>,
+    ) {
+        let detail = match changes.len() {
+            0 => "no files changed".to_string(),
+            1 => "1 file changed".to_string(),
+            count => format!("{count} files changed"),
+        };
+        self.add_work_progress(label.to_string(), detail);
+    }
+
+    fn mcp_tool_work_detail(invocation: &McpInvocation) -> String {
+        let summary = mcp_tool_status_summary(invocation);
+        match summary.details {
+            Some(details) => format!("{} · {details}", summary.header),
+            None => summary.header,
         }
     }
 
@@ -4461,6 +4553,10 @@ impl ChatWidget {
     }
 
     fn on_exec_command_output_delta(&mut self, ev: ExecCommandOutputDeltaEvent) {
+        if let Some(command) = self.running_commands.get_mut(&ev.call_id) {
+            command.record_output_chunk(&ev.chunk);
+            self.refresh_running_exec_status();
+        }
         self.track_unified_exec_output_chunk(&ev.call_id, &ev.chunk);
         if !self.bottom_pane.is_task_running() {
             return;
@@ -4535,6 +4631,13 @@ impl ChatWidget {
     }
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
+        self.add_file_change_work_progress("editing files", &event.changes);
+        self.set_status(
+            "Working".to_string(),
+            Some("editing files".to_string()),
+            StatusDetailsCapitalization::Preserve,
+            /*details_max_lines*/ 1,
+        );
         self.add_to_history(history_cell::new_patch_event(
             event.changes,
             &self.config.cwd,
@@ -4550,12 +4653,26 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_image_generation_begin(&mut self, _event: ImageGenerationBeginEvent) {
+    fn on_image_generation_begin(&mut self, event: ImageGenerationBeginEvent) {
         self.flush_answer_stream_with_separator();
+        self.add_work_progress("image generation started".to_string(), event.call_id);
+        self.set_status(
+            "Generating image".to_string(),
+            /*details*/ None,
+            StatusDetailsCapitalization::Preserve,
+            /*details_max_lines*/ 1,
+        );
     }
 
     fn on_image_generation_end(&mut self, event: ImageGenerationEndEvent) {
         self.flush_answer_stream_with_separator();
+        let detail = event
+            .saved_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .or_else(|| event.revised_prompt.clone())
+            .unwrap_or_else(|| event.status.clone());
+        self.add_work_progress("image generated".to_string(), detail);
         self.add_to_history(history_cell::new_image_generation_call(
             event.call_id,
             event.revised_prompt,
@@ -4677,6 +4794,13 @@ impl ChatWidget {
 
     fn on_web_search_begin(&mut self, ev: WebSearchBeginEvent) {
         self.flush_answer_stream_with_separator();
+        self.add_work_progress("web search started".to_string(), ev.call_id.clone());
+        self.set_status(
+            "Searching web".to_string(),
+            /*details*/ None,
+            StatusDetailsCapitalization::Preserve,
+            /*details_max_lines*/ 1,
+        );
         self.flush_active_cell();
         self.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
             ev.call_id,
@@ -4694,6 +4818,10 @@ impl ChatWidget {
             query,
             action,
         } = ev;
+        self.add_work_progress(
+            "web search finished".to_string(),
+            web_search_detail(Some(&action), &query),
+        );
         let mut handled = false;
         if let Some(cell) = self
             .active_cell
@@ -5425,6 +5553,7 @@ impl ChatWidget {
         &mut self,
         event: codex_protocol::protocol::PatchApplyEndEvent,
     ) {
+        self.add_file_change_work_progress("edited files", &event.changes);
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if !event.success {
@@ -5559,6 +5688,9 @@ impl ChatWidget {
                 source: ev.source,
                 interaction_input: interaction_input.clone(),
                 started_order,
+                started_at: Instant::now(),
+                output_line_count: 0,
+                recent_output_lines: Vec::new(),
             },
         );
         let is_wait_interaction = matches!(ev.source, ExecCommandSource::UnifiedExecInteraction)
@@ -5617,6 +5749,10 @@ impl ChatWidget {
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
         self.flush_answer_stream_with_separator();
         self.bottom_pane.ensure_status_indicator();
+        self.add_work_progress(
+            "mcp tool started".to_string(),
+            Self::mcp_tool_work_detail(&ev.invocation),
+        );
         let running_mcp_tool_activity = self.running_mcp_tool_activity.as_mut();
         running_mcp_tool_activity.sequence = running_mcp_tool_activity.sequence.saturating_add(1);
         running_mcp_tool_activity.calls.insert(
@@ -5646,6 +5782,10 @@ impl ChatWidget {
             result,
             ..
         } = ev;
+        self.add_work_progress(
+            "mcp tool finished".to_string(),
+            Self::mcp_tool_work_detail(&invocation),
+        );
         self.running_mcp_tool_activity.calls.remove(&call_id);
 
         let extra_cell = match self
@@ -5875,6 +6015,7 @@ impl ChatWidget {
             saw_plan_update_this_turn: false,
             saw_plan_item_this_turn: false,
             last_plan_progress: None,
+            latest_plan_in_progress: None,
             plan_delta_buffer: String::new(),
             plan_item_active: false,
             turn_runtime_metrics: RuntimeMetricsSummary::default(),
@@ -8424,7 +8565,22 @@ impl ChatWidget {
 
     fn open_work_state_view(&mut self) {
         let (queued_messages, pending_steers, rejected_steers) = self.pending_input_preview_texts();
+        let has_continuity_state = self.latest_work_state_proposed_plan_markdown.is_some()
+            || !self.latest_work_state_checklist.is_empty()
+            || !self.latest_work_state_progress.is_empty()
+            || !self.latest_work_state_subagents.is_empty()
+            || !queued_messages.is_empty()
+            || !pending_steers.is_empty()
+            || !rejected_steers.is_empty()
+            || self.bottom_pane.background_terminal_summary().is_some();
+        let continuity_status = has_continuity_state.then(|| {
+            "Plan, checklist, queued input, subagents, and background activity are retained for this thread".to_string()
+        });
         self.bottom_pane.show_work_state_view(WorkStateSnapshot {
+            active_phase: Some(self.current_status.header.clone()),
+            active_tool_summary: self.current_status.details.clone(),
+            pending_approval_summary: self.bottom_pane.pending_approval_summary(),
+            continuity_status,
             proposed_plan_markdown: self.latest_work_state_proposed_plan_markdown.clone(),
             checklist: self.latest_work_state_checklist.clone(),
             progress: self.latest_work_state_progress.clone(),

@@ -30,6 +30,15 @@ async fn mcp_tool_call_updates_live_status_snapshot() {
             mcp_app_resource_uri: None,
         }),
     });
+    assert_eq!(
+        chat.latest_work_state_progress
+            .last()
+            .map(|row| (row.label.as_str(), row.detail.as_str())),
+        Some((
+            "mcp tool started",
+            r#"Using github.search · {"query":"status row"}"#
+        ))
+    );
 
     let height = chat.desired_height(/*width*/ 90);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, height))

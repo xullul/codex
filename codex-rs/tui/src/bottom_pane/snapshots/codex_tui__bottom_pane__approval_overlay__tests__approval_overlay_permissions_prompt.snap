@@ -5,6 +5,10 @@ expression: "normalize_snapshot_paths(render_overlay_lines(&view, 120))"
 
   Grant these permissions?
 
+  Why approval is needed: the agent requested a permission grant before continuing
+  Scope: network; read `/tmp/readme.txt`; write `/tmp/out.txt`
+  Risk hint: grant may allow future network access
+
   Reason: need workspace access
 
   Permission rule: network; read `/tmp/readme.txt`; write `/tmp/out.txt`
