@@ -3212,6 +3212,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
         developer_instructions: None,
         final_output_json_schema: None,
         truncation_policy: None,
+        startup_context_fingerprint: None,
     };
     let rollout = RolloutLine {
         timestamp: "t0".to_string(),

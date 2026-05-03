@@ -765,34 +765,47 @@ async fn per_turn_overrides_keep_cached_prefix_and_key_constant() -> anyhow::Res
     });
     let expected_permissions_msg = body1["input"][0].clone();
     let body1_input = body1["input"].as_array().expect("input array");
-    let expected_settings_update_msg = body2["input"][body1_input.len()].clone();
-    assert_ne!(
-        expected_settings_update_msg, expected_permissions_msg,
-        "expected updated permissions message after per-turn override"
-    );
-    assert_eq!(
-        expected_settings_update_msg["role"].as_str(),
-        Some("developer")
+    let body2_input = body2["input"].as_array().expect("input array");
+    assert_eq!(&body2_input[..body1_input.len()], body1_input);
+    let appended_items = &body2_input[body1_input.len()..body2_input.len() - 1];
+    assert!(
+        appended_items
+            .iter()
+            .all(|item| item != &expected_permissions_msg),
+        "expected suffix updates instead of replacing cached prefix"
     );
     assert!(
         request2.has_message_with_input_texts("developer", |texts| {
             texts.iter().any(|text| text.contains("<model_switch>"))
         }),
-        "expected model switch section after model override: {expected_settings_update_msg:?}"
+        "expected model switch section after model override"
     );
-    let expected_env_msg_2 = body2["input"][body1_input.len() + 1].clone();
-    assert_eq!(expected_env_msg_2["role"].as_str(), Some("user"));
-    let env_text = expected_env_msg_2["content"][0]["text"]
-        .as_str()
-        .expect("environment context text");
     let shell = default_user_shell();
     let expected_cwd = new_cwd.path().display().to_string();
-    assert_default_env_context(env_text, &expected_cwd, &shell);
-    let mut expected_body2 = body1_input.to_vec();
-    expected_body2.push(expected_settings_update_msg);
-    expected_body2.push(expected_env_msg_2);
-    expected_body2.push(expected_user_message_2);
-    assert_eq!(body2["input"], serde_json::Value::Array(expected_body2));
+    assert!(
+        request2.has_message_with_input_texts("user", |texts| {
+            texts.iter().any(|text| {
+                text.starts_with(ENVIRONMENT_CONTEXT_OPEN_TAG)
+                    && text.contains(&format!("<cwd>{expected_cwd}</cwd>"))
+                    && text.contains(&format!("<shell>{}</shell>", shell.name()))
+            })
+        }),
+        "expected environment context for overridden cwd"
+    );
+    assert!(
+        request2.has_message_with_input_texts("developer", |texts| {
+            texts.iter().any(|text| {
+                text.contains("startup context for this thread changed")
+                    || text.contains("model-visible startup context")
+            })
+        }),
+        "expected startup-context refresh after startup-visible cwd change"
+    );
+    assert_eq!(
+        body2_input.last(),
+        Some(&expected_user_message_2),
+        "expected user turn after cached prefix and update suffix"
+    );
 
     Ok(())
 }

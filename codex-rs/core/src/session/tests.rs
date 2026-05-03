@@ -1801,6 +1801,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         developer_instructions: None,
         final_output_json_schema: None,
         truncation_policy: Some(turn_context.truncation_policy),
+        startup_context_fingerprint: None,
     };
     let turn_id = previous_context_item
         .turn_id
@@ -6075,8 +6076,12 @@ async fn record_context_updates_and_set_reference_context_item_injects_full_cont
     let current_context = session.reference_context_item().await;
     assert_eq!(
         serde_json::to_value(current_context).expect("serialize current context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
-            .expect("serialize expected context item")
+        serde_json::to_value(Some(
+            session
+                .turn_context_item_with_startup_fingerprint(&turn_context)
+                .await
+        ))
+        .expect("serialize expected context item")
     );
 }
 
@@ -6131,7 +6136,9 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     let turn_context = previous_context
         .with_model(next_model.to_string(), &session.services.models_manager)
         .await;
-    let previous_context_item = previous_context.to_turn_context_item();
+    let previous_context_item = session
+        .turn_context_item_with_startup_fingerprint(&previous_context)
+        .await;
     {
         let mut state = session.state.lock().await;
         state.set_reference_context_item(Some(previous_context_item.clone()));
@@ -6154,8 +6161,12 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     assert_eq!(
         serde_json::to_value(session.reference_context_item().await)
             .expect("serialize current context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
-            .expect("serialize expected context item")
+        serde_json::to_value(Some(
+            session
+                .turn_context_item_with_startup_fingerprint(&turn_context)
+                .await
+        ))
+        .expect("serialize expected context item")
     );
     session.ensure_rollout_materialized().await;
     session.flush_rollout().await.expect("rollout should flush");
@@ -6173,8 +6184,109 @@ async fn record_context_updates_and_set_reference_context_item_persists_baseline
     assert_eq!(
         serde_json::to_value(persisted_turn_context)
             .expect("serialize persisted turn context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
-            .expect("serialize expected turn context item")
+        serde_json::to_value(Some(
+            session
+                .turn_context_item_with_startup_fingerprint(&turn_context)
+                .await
+        ))
+        .expect("serialize expected turn context item")
+    );
+}
+
+#[tokio::test]
+async fn record_context_updates_omits_startup_refresh_when_fingerprint_matches() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.user_instructions = Some("Keep startup context stable.".to_string());
+    let previous_context_item = session
+        .turn_context_item_with_startup_fingerprint(&turn_context)
+        .await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item));
+    }
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+
+    assert_eq!(
+        session.clone_history().await.raw_items().to_vec(),
+        Vec::new()
+    );
+}
+
+#[tokio::test]
+async fn record_context_updates_refreshes_changed_startup_context() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.user_instructions = Some("Old startup guidance.".to_string());
+    let previous_context_item = session
+        .turn_context_item_with_startup_fingerprint(&turn_context)
+        .await;
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(previous_context_item));
+    }
+    turn_context.user_instructions = Some("New startup guidance.".to_string());
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+
+    let history = session.clone_history().await;
+    let developer_text = developer_input_texts(history.raw_items()).join("\n");
+    let user_text = history
+        .raw_items()
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { role, content, .. } if role == "user" => Some(content),
+            _ => None,
+        })
+        .flat_map(|content| content.iter())
+        .filter_map(|item| match item {
+            ContentItem::InputText { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(developer_text.contains("startup context for this thread changed"));
+    assert!(user_text.contains("New startup guidance."));
+    assert!(!user_text.contains("Old startup guidance."));
+
+    let current_context = session
+        .reference_context_item()
+        .await
+        .expect("reference context should be set");
+    assert_eq!(
+        current_context.startup_context_fingerprint,
+        session
+            .turn_context_item_with_startup_fingerprint(&turn_context)
+            .await
+            .startup_context_fingerprint
+    );
+}
+
+#[tokio::test]
+async fn record_context_updates_refreshes_legacy_startup_baseline_once() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.user_instructions = Some("Legacy baseline guidance.".to_string());
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(turn_context.to_turn_context_item()));
+    }
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+    let history_len_after_refresh = session.clone_history().await.raw_items().len();
+    assert!(history_len_after_refresh > 0);
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+
+    assert_eq!(
+        session.clone_history().await.raw_items().len(),
+        history_len_after_refresh
     );
 }
 
@@ -6290,8 +6402,12 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
     assert_eq!(
         serde_json::to_value(persisted_turn_context)
             .expect("serialize persisted turn context item"),
-        serde_json::to_value(Some(turn_context.to_turn_context_item()))
-            .expect("serialize expected turn context item")
+        serde_json::to_value(Some(
+            session
+                .turn_context_item_with_startup_fingerprint(&turn_context)
+                .await
+        ))
+        .expect("serialize expected turn context item")
     );
 }
 

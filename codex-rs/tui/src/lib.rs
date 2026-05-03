@@ -2239,6 +2239,7 @@ mod tests {
             developer_instructions: None,
             final_output_json_schema: None,
             truncation_policy: None,
+            startup_context_fingerprint: None,
         }
     }
 

@@ -2900,6 +2900,8 @@ pub struct TurnContextItem {
     pub final_output_json_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncation_policy: Option<TruncationPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_context_fingerprint: Option<String>,
 }
 
 impl TurnContextItem {
@@ -5144,6 +5146,7 @@ mod tests {
             developer_instructions: None,
             final_output_json_schema: None,
             truncation_policy: None,
+            startup_context_fingerprint: None,
         };
 
         let value = serde_json::to_value(item)?;

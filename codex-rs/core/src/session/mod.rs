@@ -833,6 +833,116 @@ async fn thread_title_from_state_db(
         .flatten()
 }
 
+#[derive(Default)]
+struct StartupContextSections {
+    developer_before_collab: Vec<String>,
+    developer_after_collab: Vec<String>,
+    developer_after_personality: Vec<String>,
+    contextual_user_sections: Vec<String>,
+    usage_hint_text: Option<String>,
+    guardian_developer_sections: Vec<String>,
+}
+
+impl StartupContextSections {
+    fn is_empty(&self) -> bool {
+        self.developer_before_collab.is_empty()
+            && self.developer_after_collab.is_empty()
+            && self.developer_after_personality.is_empty()
+            && self.contextual_user_sections.is_empty()
+            && self.usage_hint_text.is_none()
+            && self.guardian_developer_sections.is_empty()
+    }
+
+    fn fingerprint(&self) -> String {
+        use sha1::Digest;
+
+        let mut hasher = sha1::Sha1::new();
+        StartupContextSections::update_hash(
+            &mut hasher,
+            "developer_before_collab",
+            &self.developer_before_collab,
+        );
+        StartupContextSections::update_hash(
+            &mut hasher,
+            "developer_after_collab",
+            &self.developer_after_collab,
+        );
+        StartupContextSections::update_hash(
+            &mut hasher,
+            "developer_after_personality",
+            &self.developer_after_personality,
+        );
+        StartupContextSections::update_hash(
+            &mut hasher,
+            "contextual_user",
+            &self.contextual_user_sections,
+        );
+        StartupContextSections::update_hash(
+            &mut hasher,
+            "guardian_developer",
+            &self.guardian_developer_sections,
+        );
+        if let Some(usage_hint_text) = &self.usage_hint_text {
+            hasher.update(b"usage_hint");
+            hasher.update(usage_hint_text.len().to_le_bytes());
+            hasher.update(usage_hint_text.as_bytes());
+        }
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn into_refresh_items(self) -> Vec<ResponseItem> {
+        if self.is_empty() {
+            return Vec::new();
+        }
+
+        let mut items = Vec::with_capacity(4);
+        let mut developer_sections = vec![
+            "The model-visible startup context for this thread changed. Treat the following refreshed sections as the current version; earlier copies may be stale."
+                .to_string(),
+        ];
+        developer_sections.extend(self.developer_before_collab);
+        developer_sections.extend(self.developer_after_collab);
+        developer_sections.extend(self.developer_after_personality);
+        if let Some(developer_message) =
+            crate::context_manager::updates::build_developer_update_item(developer_sections)
+        {
+            items.push(developer_message);
+        }
+        if let Some(usage_hint_text) = self.usage_hint_text
+            && let Some(usage_hint_message) =
+                crate::context_manager::updates::build_developer_update_item(vec![usage_hint_text])
+        {
+            items.push(usage_hint_message);
+        }
+        if let Some(contextual_user_message) =
+            crate::context_manager::updates::build_contextual_user_message(
+                self.contextual_user_sections,
+            )
+        {
+            items.push(contextual_user_message);
+        }
+        if let Some(guardian_developer_message) =
+            crate::context_manager::updates::build_developer_update_item(
+                self.guardian_developer_sections,
+            )
+        {
+            items.push(guardian_developer_message);
+        }
+        items
+    }
+
+    fn update_hash(hasher: &mut sha1::Sha1, label: &str, sections: &[String]) {
+        use sha1::Digest;
+
+        hasher.update(label.as_bytes());
+        hasher.update(sections.len().to_le_bytes());
+        for section in sections {
+            hasher.update(section.len().to_le_bytes());
+            hasher.update(section.as_bytes());
+        }
+    }
+}
+
 impl Session {
     pub(crate) async fn app_server_client_metadata(&self) -> AppServerClientMetadata {
         let state = self.state.lock().await;
@@ -2551,6 +2661,159 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "MCP app context rendering reads through the session-owned manager guard"
     )]
+    async fn build_startup_context_sections(
+        &self,
+        turn_context: &TurnContext,
+        session_source: &SessionSource,
+        skill_side_effects: SkillRenderSideEffects<'_>,
+    ) -> StartupContextSections {
+        let mut sections = StartupContextSections::default();
+        let separate_guardian_developer_message =
+            crate::guardian::is_guardian_reviewer_source(session_source);
+
+        if !separate_guardian_developer_message
+            && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
+            && !developer_instructions.is_empty()
+        {
+            sections
+                .developer_before_collab
+                .push(developer_instructions.to_string());
+        }
+        if turn_context.features.enabled(Feature::MemoryTool)
+            && turn_context.config.memories.use_memories
+            && let Some(memory_prompt) =
+                build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
+        {
+            sections.developer_before_collab.push(memory_prompt);
+        }
+
+        let subagent_tools_available =
+            turn_context.tools_config.multi_agent_v2 || turn_context.tools_config.collab_tools;
+        if subagent_tools_available
+            && let Some(orchestration_guidance) = turn_context
+                .tools_config
+                .orchestration_mode
+                .usage_guidance()
+        {
+            sections
+                .developer_after_collab
+                .push(orchestration_guidance.to_string());
+        }
+
+        if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
+            let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
+            let accessible_and_enabled_connectors =
+                connectors::list_accessible_and_enabled_connectors_from_manager(
+                    &mcp_connection_manager,
+                    &turn_context.config,
+                )
+                .await;
+            if let Some(apps_instructions) =
+                AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
+            {
+                sections
+                    .developer_after_personality
+                    .push(apps_instructions.render());
+            }
+        }
+        if turn_context.config.include_skill_instructions {
+            let available_skills = build_available_skills(
+                &turn_context.turn_skills.outcome,
+                default_skill_metadata_budget(turn_context.model_info.context_window),
+                skill_side_effects,
+            );
+            if let Some(available_skills) = available_skills {
+                let warning_message = available_skills.warning_message.clone();
+                let skills_instructions = AvailableSkillsInstructions::from(available_skills);
+                if matches!(
+                    skill_side_effects,
+                    SkillRenderSideEffects::ThreadStart { .. }
+                ) && let Some(warning_message) = warning_message
+                {
+                    self.send_event_raw(Event {
+                        id: String::new(),
+                        msg: EventMsg::Warning(WarningEvent {
+                            message: warning_message,
+                        }),
+                    })
+                    .await;
+                }
+                sections
+                    .developer_after_personality
+                    .push(skills_instructions.render());
+            }
+        }
+        let loaded_plugins = self
+            .services
+            .plugins_manager
+            .plugins_for_config(&turn_context.config)
+            .await;
+        if let Some(plugin_instructions) =
+            AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
+        {
+            sections
+                .developer_after_personality
+                .push(plugin_instructions.render());
+        }
+        if turn_context.features.enabled(Feature::CodexGitCommit)
+            && let Some(commit_message_instruction) = commit_message_trailer_instruction(
+                turn_context.config.commit_attribution.as_deref(),
+            )
+        {
+            sections
+                .developer_after_personality
+                .push(commit_message_instruction);
+        }
+
+        if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
+            sections.contextual_user_sections.push(
+                UserInstructions {
+                    text: user_instructions.to_string(),
+                    directory: turn_context.cwd.to_string_lossy().into_owned(),
+                }
+                .render(),
+            );
+        }
+
+        sections.usage_hint_text =
+            multi_agents::usage_hint_text(turn_context, session_source).map(ToString::to_string);
+
+        if separate_guardian_developer_message
+            && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
+            && !developer_instructions.is_empty()
+        {
+            sections
+                .guardian_developer_sections
+                .push(developer_instructions.to_string());
+        }
+
+        sections
+    }
+
+    async fn startup_context_fingerprint(&self, turn_context: &TurnContext) -> String {
+        let session_source = {
+            let state = self.state.lock().await;
+            state.session_configuration.session_source.clone()
+        };
+        self.build_startup_context_sections(
+            turn_context,
+            &session_source,
+            SkillRenderSideEffects::None,
+        )
+        .await
+        .fingerprint()
+    }
+
+    pub(crate) async fn turn_context_item_with_startup_fingerprint(
+        &self,
+        turn_context: &TurnContext,
+    ) -> TurnContextItem {
+        let mut item = turn_context.to_turn_context_item();
+        item.startup_context_fingerprint =
+            Some(self.startup_context_fingerprint(turn_context).await);
+        item
+    }
+
     pub(crate) async fn build_initial_context(
         &self,
         turn_context: &TurnContext,
@@ -2600,40 +2863,23 @@ impl Session {
                 .render(),
             );
         }
-        let separate_guardian_developer_message =
-            crate::guardian::is_guardian_reviewer_source(&session_source);
-        // Keep the guardian policy prompt out of the aggregated developer bundle so it
-        // stays isolated as its own top-level developer message for guardian subagents.
-        if !separate_guardian_developer_message
-            && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
-            && !developer_instructions.is_empty()
-        {
-            developer_sections.push(developer_instructions.to_string());
-        }
-        // Add developer instructions for memories.
-        if turn_context.features.enabled(Feature::MemoryTool)
-            && turn_context.config.memories.use_memories
-            && let Some(memory_prompt) =
-                build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
-        {
-            developer_sections.push(memory_prompt);
-        }
+        let startup_sections = self
+            .build_startup_context_sections(
+                turn_context,
+                &session_source,
+                SkillRenderSideEffects::ThreadStart {
+                    session_telemetry: &self.services.session_telemetry,
+                },
+            )
+            .await;
+        developer_sections.extend(startup_sections.developer_before_collab.clone());
         // Add developer instructions from collaboration_mode if they exist and are non-empty
         if let Some(collab_instructions) =
             CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
         {
             developer_sections.push(collab_instructions.render());
         }
-        let subagent_tools_available =
-            turn_context.tools_config.multi_agent_v2 || turn_context.tools_config.collab_tools;
-        if subagent_tools_available
-            && let Some(orchestration_guidance) = turn_context
-                .tools_config
-                .orchestration_mode
-                .usage_guidance()
-        {
-            developer_sections.push(orchestration_guidance.to_string());
-        }
+        developer_sections.extend(startup_sections.developer_after_collab.clone());
         if let Some(realtime_update) = crate::context_manager::updates::build_initial_realtime_item(
             reference_context_item.as_ref(),
             previous_turn_settings.as_ref(),
@@ -2658,60 +2904,7 @@ impl Session {
                     .push(PersonalitySpecInstructions::new(personality_message).render());
             }
         }
-        if turn_context.config.include_apps_instructions && turn_context.apps_enabled() {
-            let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
-            let accessible_and_enabled_connectors =
-                connectors::list_accessible_and_enabled_connectors_from_manager(
-                    &mcp_connection_manager,
-                    &turn_context.config,
-                )
-                .await;
-            if let Some(apps_instructions) =
-                AppsInstructions::from_connectors(&accessible_and_enabled_connectors)
-            {
-                developer_sections.push(apps_instructions.render());
-            }
-        }
-        if turn_context.config.include_skill_instructions {
-            let available_skills = build_available_skills(
-                &turn_context.turn_skills.outcome,
-                default_skill_metadata_budget(turn_context.model_info.context_window),
-                SkillRenderSideEffects::ThreadStart {
-                    session_telemetry: &self.services.session_telemetry,
-                },
-            );
-            if let Some(available_skills) = available_skills {
-                let warning_message = available_skills.warning_message.clone();
-                let skills_instructions = AvailableSkillsInstructions::from(available_skills);
-                if let Some(warning_message) = warning_message {
-                    self.send_event_raw(Event {
-                        id: String::new(),
-                        msg: EventMsg::Warning(WarningEvent {
-                            message: warning_message,
-                        }),
-                    })
-                    .await;
-                }
-                developer_sections.push(skills_instructions.render());
-            }
-        }
-        let loaded_plugins = self
-            .services
-            .plugins_manager
-            .plugins_for_config(&turn_context.config)
-            .await;
-        if let Some(plugin_instructions) =
-            AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
-        {
-            developer_sections.push(plugin_instructions.render());
-        }
-        if turn_context.features.enabled(Feature::CodexGitCommit)
-            && let Some(commit_message_instruction) = commit_message_trailer_instruction(
-                turn_context.config.commit_attribution.as_deref(),
-            )
-        {
-            developer_sections.push(commit_message_instruction);
-        }
+        developer_sections.extend(startup_sections.developer_after_personality.clone());
         if let Some(active_goal_context) =
             self.thread_goal_context_item(collaboration_mode.mode).await
             && let ResponseItem::Message { content, .. } = active_goal_context
@@ -2723,15 +2916,7 @@ impl Session {
                 developer_sections.push(text);
             }
         }
-        if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
-            contextual_user_sections.push(
-                UserInstructions {
-                    text: user_instructions.to_string(),
-                    directory: turn_context.cwd.to_string_lossy().into_owned(),
-                }
-                .render(),
-            );
-        }
+        contextual_user_sections.extend(startup_sections.contextual_user_sections.clone());
         if turn_context.config.include_environment_context {
             let subagents = self
                 .services
@@ -2745,20 +2930,15 @@ impl Session {
             );
         }
 
-        let multi_agent_v2_usage_hint_text =
-            multi_agents::usage_hint_text(turn_context, &session_source);
-
         let mut items = Vec::with_capacity(4);
         if let Some(developer_message) =
             crate::context_manager::updates::build_developer_update_item(developer_sections)
         {
             items.push(developer_message);
         }
-        if let Some(usage_hint_text) = multi_agent_v2_usage_hint_text
+        if let Some(usage_hint_text) = startup_sections.usage_hint_text.clone()
             && let Some(usage_hint_message) =
-                crate::context_manager::updates::build_developer_update_item(vec![
-                    usage_hint_text.to_string(),
-                ])
+                crate::context_manager::updates::build_developer_update_item(vec![usage_hint_text])
         {
             items.push(usage_hint_message);
         }
@@ -2769,13 +2949,11 @@ impl Session {
         }
         // Emit the guardian policy prompt as a separate developer item so the guardian
         // subagent sees a distinct, easy-to-audit instruction block.
-        if separate_guardian_developer_message
-            && let Some(developer_instructions) = turn_context.developer_instructions.as_deref()
-            && !developer_instructions.is_empty()
+        if !startup_sections.guardian_developer_sections.is_empty()
             && let Some(guardian_developer_message) =
-                crate::context_manager::updates::build_developer_update_item(vec![
-                    developer_instructions.to_string(),
-                ])
+                crate::context_manager::updates::build_developer_update_item(
+                    startup_sections.guardian_developer_sections.clone(),
+                )
         {
             items.push(guardian_developer_message);
         }
@@ -2822,6 +3000,9 @@ impl Session {
             state.reference_context_item()
         };
         let should_inject_full_context = reference_context_item.is_none();
+        let turn_context_item = self
+            .turn_context_item_with_startup_fingerprint(turn_context)
+            .await;
         let context_items = if should_inject_full_context {
             self.build_initial_context(turn_context).await
         } else {
@@ -2829,6 +3010,25 @@ impl Session {
             let mut items = self
                 .build_settings_update_items(reference_context_item.as_ref(), turn_context)
                 .await;
+            if reference_context_item
+                .as_ref()
+                .and_then(|item| item.startup_context_fingerprint.as_deref())
+                != turn_context_item.startup_context_fingerprint.as_deref()
+            {
+                let session_source = {
+                    let state = self.state.lock().await;
+                    state.session_configuration.session_source.clone()
+                };
+                items.extend(
+                    self.build_startup_context_sections(
+                        turn_context,
+                        &session_source,
+                        SkillRenderSideEffects::None,
+                    )
+                    .await
+                    .into_refresh_items(),
+                );
+            }
             if let Some(active_goal_context) = self
                 .thread_goal_context_item(self.collaboration_mode().await.mode)
                 .await
@@ -2837,7 +3037,6 @@ impl Session {
             }
             items
         };
-        let turn_context_item = turn_context.to_turn_context_item();
         if !context_items.is_empty() {
             self.record_conversation_items(turn_context, &context_items)
                 .await;

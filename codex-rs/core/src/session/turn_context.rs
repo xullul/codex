@@ -348,6 +348,7 @@ impl TurnContext {
             developer_instructions: self.developer_instructions.clone(),
             final_output_json_schema: self.final_output_json_schema.clone(),
             truncation_policy: Some(self.truncation_policy),
+            startup_context_fingerprint: None,
         }
     }
 
