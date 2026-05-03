@@ -1295,6 +1295,8 @@ async fn inactive_subagent_activity_stays_in_bottom_pane() -> Result<()> {
             state: SubagentActivityState::Running,
             summary: "Search".to_string(),
             detail: Some("TODO in src".to_string()),
+            tool_count: 1,
+            last_activity: Some("last 0s ago".to_string()),
             token_summary: None,
         }]
     );

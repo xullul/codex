@@ -89,6 +89,8 @@ pub(crate) struct WorkStateSnapshot {
     pub(crate) active_phase: Option<String>,
     pub(crate) active_tool_summary: Option<String>,
     pub(crate) pending_approval_summary: Option<String>,
+    pub(crate) context_summary: Option<String>,
+    pub(crate) active_hook_summary: Option<String>,
     pub(crate) continuity_status: Option<String>,
     pub(crate) proposed_plan_markdown: Option<String>,
     pub(crate) checklist: Vec<WorkStatePlanItem>,
@@ -150,6 +152,16 @@ impl WorkStateView {
                 .is_some_and(|summary| !summary.trim().is_empty())
             || self
                 .snapshot
+                .context_summary
+                .as_deref()
+                .is_some_and(|summary| !summary.trim().is_empty())
+            || self
+                .snapshot
+                .active_hook_summary
+                .as_deref()
+                .is_some_and(|summary| !summary.trim().is_empty())
+            || self
+                .snapshot
                 .continuity_status
                 .as_deref()
                 .is_some_and(|status| !status.trim().is_empty())
@@ -174,6 +186,18 @@ impl WorkStateView {
                 width,
                 "Approval",
                 self.snapshot.pending_approval_summary.as_deref(),
+            );
+            push_optional_state_row(
+                &mut lines,
+                width,
+                "Context",
+                self.snapshot.context_summary.as_deref(),
+            );
+            push_optional_state_row(
+                &mut lines,
+                width,
+                "Hooks",
+                self.snapshot.active_hook_summary.as_deref(),
             );
             push_optional_state_row(
                 &mut lines,
@@ -315,9 +339,20 @@ impl WorkStateView {
                     .filter(|tokens| !tokens.trim().is_empty())
                     .map(|tokens| format!(" · {tokens}"))
                     .unwrap_or_default();
+                let tool_count = if row.tool_count > 0 {
+                    format!(" · {}", tool_count_label(row.tool_count))
+                } else {
+                    String::new()
+                };
+                let last_activity = row
+                    .last_activity
+                    .as_deref()
+                    .filter(|activity| !activity.trim().is_empty())
+                    .map(|activity| format!(" · {activity}"))
+                    .unwrap_or_default();
                 lines.extend(wrap_dimmed(
                     &format!(
-                        "{} · {} · {}{detail}{token_summary}",
+                        "{} · {} · {}{detail}{token_summary}{tool_count}{last_activity}",
                         row.label,
                         row.state.label(),
                         row.summary
@@ -453,6 +488,10 @@ fn push_section_with_summary(lines: &mut Vec<Line<'static>>, title: &str, summar
 fn pluralize(count: usize, singular: &str, plural: &str) -> String {
     let noun = if count == 1 { singular } else { plural };
     format!("{count} {noun}")
+}
+
+fn tool_count_label(count: usize) -> String {
+    pluralize(count, "tool", "tools")
 }
 
 fn wrap_dimmed(text: &str, width: u16, indent: &'static str) -> Vec<Line<'static>> {
@@ -612,6 +651,8 @@ mod tests {
             active_phase: Some("Working".to_string()),
             active_tool_summary: Some("reading TUI state surfaces".to_string()),
             pending_approval_summary: Some("1 command approval waiting".to_string()),
+            context_summary: Some("89% used · 242K/272K".to_string()),
+            active_hook_summary: Some("1 running · PreToolUse hook".to_string()),
             continuity_status: Some(
                 "Checklist, proposed plan, queued input, and subagent rows are retained for resume"
                     .to_string(),
@@ -642,6 +683,8 @@ mod tests {
                 state: crate::bottom_pane::SubagentActivityState::Running,
                 summary: "reading TUI state".to_string(),
                 detail: Some("codex-rs/tui/src/chatwidget.rs".to_string()),
+                tool_count: 2,
+                last_activity: Some("last 4s ago".to_string()),
                 token_summary: Some("12K tokens".to_string()),
             }],
             background_summary: Some(

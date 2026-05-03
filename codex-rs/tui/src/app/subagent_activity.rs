@@ -6,6 +6,7 @@ use crate::bottom_pane::SubagentActivityState;
 use crate::exec_cell::exec_status_summary;
 use crate::exec_command::parsed_command_actions_from_item;
 use crate::status::format_tokens_compact;
+use crate::status_indicator_widget::fmt_elapsed_compact;
 use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
 use codex_app_server_protocol::CommandAction;
@@ -28,6 +29,8 @@ struct SubagentActivityRecord {
     state: SubagentActivityState,
     summary: String,
     detail: Option<String>,
+    tool_count: usize,
+    last_activity_at: Option<Instant>,
     token_summary: Option<String>,
     order: u64,
 }
@@ -65,6 +68,7 @@ impl SubagentActivityTracker {
                     summary: "starting".to_string(),
                     detail: None,
                 },
+                ActivityMetadataUpdate::default(),
             ),
             ServerNotification::TurnStarted(_) => self.upsert(
                 thread_id,
@@ -74,6 +78,7 @@ impl SubagentActivityTracker {
                     summary: "running".to_string(),
                     detail: None,
                 },
+                ActivityMetadataUpdate::default(),
             ),
             ServerNotification::ThreadTokenUsageUpdated(notification) => {
                 let token_summary =
@@ -82,14 +87,30 @@ impl SubagentActivityTracker {
             }
             ServerNotification::ItemStarted(notification) => {
                 if let Some(update) = item_started_update(&notification.item) {
-                    self.upsert(thread_id, label, update)
+                    self.upsert(
+                        thread_id,
+                        label,
+                        update,
+                        ActivityMetadataUpdate {
+                            count_tool: is_tool_activity(&notification.item),
+                            last_activity_at: Some(Instant::now()),
+                        },
+                    )
                 } else {
                     false
                 }
             }
             ServerNotification::ItemCompleted(notification) => {
                 if let Some(update) = item_completed_update(&notification.item) {
-                    self.upsert(thread_id, label, update)
+                    self.upsert(
+                        thread_id,
+                        label,
+                        update,
+                        ActivityMetadataUpdate {
+                            count_tool: false,
+                            last_activity_at: Some(Instant::now()),
+                        },
+                    )
                 } else {
                     false
                 }
@@ -104,6 +125,7 @@ impl SubagentActivityTracker {
                         notification.turn.status.clone(),
                         notification.turn.error.as_ref(),
                     ),
+                    ActivityMetadataUpdate::default(),
                 )
             }
             ServerNotification::TurnCompleted(notification) => self.upsert(
@@ -113,6 +135,7 @@ impl SubagentActivityTracker {
                     notification.turn.status.clone(),
                     notification.turn.error.as_ref(),
                 ),
+                ActivityMetadataUpdate::default(),
             ),
             ServerNotification::ThreadClosed(_) => self.remove(thread_id),
             _ => false,
@@ -123,6 +146,15 @@ impl SubagentActivityTracker {
         &self,
         active_thread_id: Option<ThreadId>,
         primary_thread_id: Option<ThreadId>,
+    ) -> Vec<SubagentActivityRow> {
+        self.rows_at(active_thread_id, primary_thread_id, Instant::now())
+    }
+
+    fn rows_at(
+        &self,
+        active_thread_id: Option<ThreadId>,
+        primary_thread_id: Option<ThreadId>,
+        now: Instant,
     ) -> Vec<SubagentActivityRow> {
         let mut records = self
             .records
@@ -140,12 +172,27 @@ impl SubagentActivityTracker {
                 state: record.state,
                 summary: record.summary.clone(),
                 detail: record.detail.clone(),
+                tool_count: record.tool_count,
+                last_activity: record.last_activity_at.map(|last_activity_at| {
+                    format!(
+                        "last {} ago",
+                        fmt_elapsed_compact(
+                            now.saturating_duration_since(last_activity_at).as_secs()
+                        )
+                    )
+                }),
                 token_summary: record.token_summary.clone(),
             })
             .collect()
     }
 
-    fn upsert(&mut self, thread_id: ThreadId, label: String, update: ActivityUpdate) -> bool {
+    fn upsert(
+        &mut self,
+        thread_id: ThreadId,
+        label: String,
+        update: ActivityUpdate,
+        metadata: ActivityMetadataUpdate,
+    ) -> bool {
         if !self.records.contains_key(&thread_id) {
             let order = self.next_order;
             self.next_order += 1;
@@ -156,6 +203,8 @@ impl SubagentActivityTracker {
                     state: update.state,
                     summary: update.summary.clone(),
                     detail: update.detail.clone(),
+                    tool_count: 0,
+                    last_activity_at: None,
                     token_summary: None,
                     order,
                 },
@@ -168,11 +217,21 @@ impl SubagentActivityTracker {
         let changed = record.label != label
             || record.state != update.state
             || record.summary != update.summary
-            || record.detail != update.detail;
+            || record.detail != update.detail
+            || metadata.count_tool
+            || metadata
+                .last_activity_at
+                .is_some_and(|at| record.last_activity_at != Some(at));
         record.label = label;
         record.state = update.state;
         record.summary = update.summary;
         record.detail = update.detail;
+        if metadata.count_tool {
+            record.tool_count = record.tool_count.saturating_add(1);
+        }
+        if let Some(last_activity_at) = metadata.last_activity_at {
+            record.last_activity_at = Some(last_activity_at);
+        }
         changed
     }
 
@@ -192,6 +251,8 @@ impl SubagentActivityTracker {
                     state: SubagentActivityState::Running,
                     summary: "running".to_string(),
                     detail: None,
+                    tool_count: 0,
+                    last_activity_at: None,
                     token_summary: None,
                     order,
                 },
@@ -210,6 +271,26 @@ impl SubagentActivityTracker {
 
 fn format_token_summary(total_tokens: i64) -> Option<String> {
     (total_tokens > 0).then(|| format!("{} tokens", format_tokens_compact(total_tokens)))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ActivityMetadataUpdate {
+    count_tool: bool,
+    last_activity_at: Option<Instant>,
+}
+
+fn is_tool_activity(item: &ThreadItem) -> bool {
+    matches!(
+        item,
+        ThreadItem::CommandExecution { .. }
+            | ThreadItem::FileChange { .. }
+            | ThreadItem::McpToolCall { .. }
+            | ThreadItem::DynamicToolCall { .. }
+            | ThreadItem::CollabAgentToolCall { .. }
+            | ThreadItem::WebSearch { .. }
+            | ThreadItem::ImageView { .. }
+            | ThreadItem::ImageGeneration { .. }
+    )
 }
 
 fn item_started_update(item: &ThreadItem) -> Option<ActivityUpdate> {
@@ -666,6 +747,8 @@ mod tests {
                 state: SubagentActivityState::Running,
                 summary: "Search".to_string(),
                 detail: Some("subagent in codex-rs/tui/src".to_string()),
+                tool_count: 1,
+                last_activity: Some("last 0s ago".to_string()),
                 token_summary: Some("844K tokens".to_string()),
             }]
         );
@@ -711,6 +794,8 @@ mod tests {
                 state: SubagentActivityState::Running,
                 summary: "Read".to_string(),
                 detail: Some("app.rs".to_string()),
+                tool_count: 1,
+                last_activity: Some("last 0s ago".to_string()),
                 token_summary: None,
             }]
         );
@@ -793,6 +878,8 @@ mod tests {
                 state: SubagentActivityState::Completed,
                 summary: "finished".to_string(),
                 detail: None,
+                tool_count: 0,
+                last_activity: None,
                 token_summary: None,
             }]
         );

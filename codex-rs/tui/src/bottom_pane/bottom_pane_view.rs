@@ -97,6 +97,11 @@ pub(crate) trait BottomPaneView: Renderable {
         Some(request)
     }
 
+    /// Compact summary of approvals owned by this view.
+    fn pending_approval_summary(&self, _now: std::time::Instant) -> Option<String> {
+        None
+    }
+
     /// Try to handle request_user_input; return the original value if not
     /// consumed.
     fn try_consume_user_input_request(

@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::app_event::AppEvent;
@@ -34,6 +35,7 @@ use crate::keymap::primary_binding;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
+use crate::status_indicator_widget::fmt_elapsed_compact;
 use codex_features::Features;
 use codex_protocol::ThreadId;
 use codex_protocol::mcp::RequestId;
@@ -150,8 +152,8 @@ impl ApprovalRequest {
 
 /// Modal overlay asking the user to approve or deny one or more requests.
 pub(crate) struct ApprovalOverlay {
-    current_request: Option<ApprovalRequest>,
-    queue: Vec<ApprovalRequest>,
+    current_request: Option<TimedApprovalRequest>,
+    queue: Vec<TimedApprovalRequest>,
     app_event_tx: AppEventSender,
     list: ListSelectionView,
     options: Vec<ApprovalOption>,
@@ -162,9 +164,39 @@ pub(crate) struct ApprovalOverlay {
     list_keymap: ListKeymap,
 }
 
+#[derive(Clone, Debug)]
+struct TimedApprovalRequest {
+    request: ApprovalRequest,
+    enqueued_at: Instant,
+}
+
+impl TimedApprovalRequest {
+    fn matches_resolved_request(&self, request: &ResolvedAppServerRequest) -> bool {
+        self.request.matches_resolved_request(request)
+    }
+}
+
 impl ApprovalOverlay {
     pub fn new(
         request: ApprovalRequest,
+        app_event_tx: AppEventSender,
+        features: Features,
+        approval_keymap: ApprovalKeymap,
+        list_keymap: ListKeymap,
+    ) -> Self {
+        Self::new_with_enqueue_time(
+            request,
+            Instant::now(),
+            app_event_tx,
+            features,
+            approval_keymap,
+            list_keymap,
+        )
+    }
+
+    pub(crate) fn new_with_enqueue_time(
+        request: ApprovalRequest,
+        enqueued_at: Instant,
         app_event_tx: AppEventSender,
         features: Features,
         approval_keymap: ApprovalKeymap,
@@ -182,12 +214,22 @@ impl ApprovalOverlay {
             approval_keymap,
             list_keymap,
         };
-        view.set_current(request);
+        view.set_current(TimedApprovalRequest {
+            request,
+            enqueued_at,
+        });
         view
     }
 
     pub fn enqueue_request(&mut self, req: ApprovalRequest) {
-        self.queue.push(req);
+        self.enqueue_request_at(req, Instant::now());
+    }
+
+    pub(crate) fn enqueue_request_at(&mut self, request: ApprovalRequest, enqueued_at: Instant) {
+        self.queue.push(TimedApprovalRequest {
+            request,
+            enqueued_at,
+        });
     }
 
     fn dismiss_resolved_request(&mut self, request: &ResolvedAppServerRequest) -> bool {
@@ -207,17 +249,20 @@ impl ApprovalOverlay {
         self.queue.len() != queue_len
     }
 
-    fn set_current(&mut self, request: ApprovalRequest) {
+    fn set_current(&mut self, timed_request: TimedApprovalRequest) {
         self.current_complete = false;
-        let header = build_header(&request);
+        let header = build_header(
+            &timed_request.request,
+            Some(wait_summary(timed_request.enqueued_at, Instant::now())),
+        );
         let (options, params) = Self::build_options(
-            &request,
+            &timed_request.request,
             header,
             &self.features,
             &self.approval_keymap,
             &self.list_keymap,
         );
-        self.current_request = Some(request);
+        self.current_request = Some(timed_request);
         self.options = options;
         self.list =
             ListSelectionView::new(params, self.app_event_tx.clone(), self.list_keymap.clone());
@@ -300,7 +345,7 @@ impl ApprovalOverlay {
         let Some(option) = self.options.get(actual_idx) else {
             return;
         };
-        if let Some(request) = self.current_request.as_ref() {
+        if let Some(request) = self.current_request.as_ref().map(|timed| &timed.request) {
             match (request, &option.decision) {
                 (ApprovalRequest::Exec { id, command, .. }, ApprovalDecision::Review(decision)) => {
                     self.handle_exec_decision(id, command, decision.clone());
@@ -335,7 +380,7 @@ impl ApprovalOverlay {
     }
 
     fn handle_exec_decision(&self, id: &str, command: &[String], decision: ReviewDecision) {
-        let Some(request) = self.current_request.as_ref() else {
+        let Some(request) = self.current_request.as_ref().map(|timed| &timed.request) else {
             return;
         };
         if request.thread_label().is_none() {
@@ -357,7 +402,7 @@ impl ApprovalOverlay {
         permissions: &RequestPermissionProfile,
         decision: PermissionsDecision,
     ) {
-        let Some(request) = self.current_request.as_ref() else {
+        let Some(request) = self.current_request.as_ref().map(|timed| &timed.request) else {
             return;
         };
         let granted_permissions = match decision {
@@ -405,7 +450,7 @@ impl ApprovalOverlay {
         let Some(thread_id) = self
             .current_request
             .as_ref()
-            .map(ApprovalRequest::thread_id)
+            .map(|timed| timed.request.thread_id())
         else {
             return;
         };
@@ -422,7 +467,7 @@ impl ApprovalOverlay {
         let Some(thread_id) = self
             .current_request
             .as_ref()
-            .map(ApprovalRequest::thread_id)
+            .map(|timed| timed.request.thread_id())
         else {
             return;
         };
@@ -449,7 +494,7 @@ impl ApprovalOverlay {
             return;
         }
         if !self.current_complete
-            && let Some(request) = self.current_request.as_ref()
+            && let Some(request) = self.current_request.as_ref().map(|timed| &timed.request)
         {
             match request {
                 ApprovalRequest::Exec { id, command, .. } => {
@@ -493,7 +538,7 @@ impl ApprovalOverlay {
     fn try_handle_shortcut(&mut self, key_event: &KeyEvent) -> bool {
         if key_event.kind == KeyEventKind::Press
             && self.approval_keymap.open_fullscreen.is_pressed(*key_event)
-            && let Some(request) = self.current_request.as_ref()
+            && let Some(request) = self.current_request.as_ref().map(|timed| &timed.request)
         {
             self.app_event_tx
                 .send(AppEvent::FullScreenApprovalRequest(request.clone()));
@@ -502,7 +547,7 @@ impl ApprovalOverlay {
 
         if key_event.kind == KeyEventKind::Press
             && self.approval_keymap.open_thread.is_pressed(*key_event)
-            && let Some(request) = self.current_request.as_ref()
+            && let Some(request) = self.current_request.as_ref().map(|timed| &timed.request)
             && request.thread_label().is_some()
         {
             self.app_event_tx
@@ -556,6 +601,21 @@ impl BottomPaneView for ApprovalOverlay {
         None
     }
 
+    fn pending_approval_summary(&self, now: Instant) -> Option<String> {
+        let current = self.current_request.as_ref()?;
+        let total = 1 + self.queue.len();
+        let thread = current
+            .request
+            .thread_label()
+            .map(|label| format!(" in {label}"))
+            .unwrap_or_default();
+        Some(format!(
+            "{} waiting{thread}; oldest {}",
+            approval_count_label(total),
+            wait_summary(current.enqueued_at, now)
+        ))
+    }
+
     fn dismiss_app_server_request(&mut self, request: &ResolvedAppServerRequest) -> bool {
         self.dismiss_resolved_request(request)
     }
@@ -577,6 +637,21 @@ impl Renderable for ApprovalOverlay {
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.list.cursor_pos(area)
     }
+}
+
+fn approval_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 approval".to_string()
+    } else {
+        format!("{count} approvals")
+    }
+}
+
+fn wait_summary(enqueued_at: Instant, now: Instant) -> String {
+    format!(
+        "{} ago",
+        fmt_elapsed_compact(now.saturating_duration_since(enqueued_at).as_secs())
+    )
 }
 
 fn approval_footer_hint(
@@ -604,7 +679,7 @@ fn approval_footer_hint(
     Line::from(spans)
 }
 
-fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
+fn build_header(request: &ApprovalRequest, wait_summary: Option<String>) -> Box<dyn Renderable> {
     match request {
         ApprovalRequest::Exec {
             thread_label,
@@ -621,6 +696,12 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                     thread_label.clone().bold(),
                 ]));
                 header.push(Line::from(""));
+            }
+            if let Some(wait_summary) = wait_summary.as_ref() {
+                header.push(Line::from(vec![
+                    "Waiting: ".into(),
+                    wait_summary.clone().dim(),
+                ]));
             }
             header.push(Line::from(vec![
                 "Why approval is needed: ".into(),
@@ -671,6 +752,12 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                 ]));
                 header.push(Line::from(""));
             }
+            if let Some(wait_summary) = wait_summary.as_ref() {
+                header.push(Line::from(vec![
+                    "Waiting: ".into(),
+                    wait_summary.clone().dim(),
+                ]));
+            }
             header.push(Line::from(vec![
                 "Why approval is needed: ".into(),
                 approval_reason_summary(request).dim(),
@@ -709,6 +796,12 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
             }
             if !header.is_empty() {
                 header.push(Box::new(Line::from("")));
+            }
+            if let Some(wait_summary) = wait_summary.as_ref() {
+                header.push(Box::new(Line::from(vec![
+                    "Waiting: ".into(),
+                    wait_summary.clone().dim(),
+                ])));
             }
             header.push(Box::new(Line::from(vec![
                 "Why approval is needed: ".into(),
@@ -750,6 +843,12 @@ fn build_header(request: &ApprovalRequest) -> Box<dyn Renderable> {
                     thread_label.clone().bold(),
                 ]));
                 lines.push(Line::from(""));
+            }
+            if let Some(wait_summary) = wait_summary.as_ref() {
+                lines.push(Line::from(vec![
+                    "Waiting: ".into(),
+                    wait_summary.clone().dim(),
+                ]));
             }
             lines.push(Line::from(vec![
                 "Why approval is needed: ".into(),

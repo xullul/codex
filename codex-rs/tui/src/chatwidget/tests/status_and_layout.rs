@@ -2268,6 +2268,10 @@ async fn completed_hook_with_no_entries_stays_out_of_history() {
     });
     assert!(drain_insert_history(&mut rx).is_empty());
     reveal_running_hooks(&mut chat);
+    assert_eq!(
+        chat.work_state_active_hook_summary(),
+        Some("1 running · PostToolUse hook".to_string())
+    );
     let running_snapshot = hook_live_and_history_snapshot(&chat, "running", "");
 
     chat.handle_codex_event(Event {
@@ -2294,6 +2298,13 @@ async fn completed_hook_with_no_entries_stays_out_of_history() {
     });
 
     assert!(drain_insert_history(&mut rx).is_empty());
+    assert_eq!(chat.work_state_active_hook_summary(), None);
+    assert!(
+        chat.latest_work_state_progress
+            .iter()
+            .any(|row| { row.label == "hook completed" && row.detail == "completed · 1ms" }),
+        "hook completion should be visible in /work evidence"
+    );
     let completed_lingering_snapshot =
         hook_live_and_history_snapshot(&chat, "completed lingering", "");
     expire_quiet_hook_linger(&mut chat);

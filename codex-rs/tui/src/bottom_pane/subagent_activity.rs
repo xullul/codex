@@ -62,6 +62,8 @@ pub(crate) struct SubagentActivityRow {
     pub(crate) state: SubagentActivityState,
     pub(crate) summary: String,
     pub(crate) detail: Option<String>,
+    pub(crate) tool_count: usize,
+    pub(crate) last_activity: Option<String>,
     pub(crate) token_summary: Option<String>,
 }
 
@@ -152,8 +154,28 @@ fn render_row(row: &SubagentActivityRow, width: u16) -> Line<'static> {
         spans.push(" · ".dim());
         spans.push(token_summary.clone().dim());
     }
+    if row.tool_count > 0 {
+        spans.push(" · ".dim());
+        spans.push(tool_count_label(row.tool_count).dim());
+    }
+    if let Some(last_activity) = row
+        .last_activity
+        .as_ref()
+        .filter(|last_activity| !last_activity.trim().is_empty())
+    {
+        spans.push(" · ".dim());
+        spans.push(last_activity.clone().dim());
+    }
 
     truncate_line_with_ellipsis_if_overflow(Line::from(spans), usize::from(width))
+}
+
+fn tool_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 tool".to_string()
+    } else {
+        format!("{count} tools")
+    }
 }
 
 fn render_detail(detail: &str, width: u16) -> Line<'static> {
@@ -205,6 +227,8 @@ mod tests {
                 state: SubagentActivityState::Running,
                 summary: "Search".to_string(),
                 detail: Some("subagent in codex-rs/tui/src".to_string()),
+                tool_count: 3,
+                last_activity: Some("last 12s ago".to_string()),
                 token_summary: Some("844K tokens".to_string()),
             },
             SubagentActivityRow {
@@ -212,6 +236,8 @@ mod tests {
                 state: SubagentActivityState::Completed,
                 summary: "finished".to_string(),
                 detail: Some("reviewed Claude AgentProgressLine".to_string()),
+                tool_count: 1,
+                last_activity: Some("last 1m 02s ago".to_string()),
                 token_summary: Some("232K tokens".to_string()),
             },
         ]);
@@ -232,6 +258,8 @@ mod tests {
                     state: SubagentActivityState::Running,
                     summary: "running".to_string(),
                     detail: None,
+                    tool_count: 0,
+                    last_activity: None,
                     token_summary: None,
                 })
                 .collect(),

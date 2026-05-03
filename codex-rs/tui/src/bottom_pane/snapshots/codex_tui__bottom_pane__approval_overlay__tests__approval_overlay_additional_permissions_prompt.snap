@@ -5,6 +5,7 @@ expression: "normalize_snapshot_paths(render_overlay_lines(&view, 120))"
 
   Run this command?
 
+  Waiting: 0s ago
   Why approval is needed: the command requested broader permissions than the current profile
   Scope: network; read `/tmp/readme.txt`; write `/tmp/out.txt`
 

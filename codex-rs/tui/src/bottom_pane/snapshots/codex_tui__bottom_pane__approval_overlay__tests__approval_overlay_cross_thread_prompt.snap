@@ -7,6 +7,7 @@ expression: "render_overlay_lines(&view, 80)"
 
   Thread: Robie [explorer]
 
+  Waiting: 0s ago
   Why approval is needed: the command needs explicit approval under the
   current policy
   Scope: one command: echo hi

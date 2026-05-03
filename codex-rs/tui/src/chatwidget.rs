@@ -938,6 +938,7 @@ pub(crate) struct ChatWidget {
     latest_work_state_checklist: Vec<WorkStatePlanItem>,
     latest_work_state_progress: Vec<WorkProgressRow>,
     latest_work_state_subagents: Vec<SubagentActivityRow>,
+    latest_work_state_active_hooks: HashMap<String, String>,
     /// Whether this turn already produced a copyable response.
     ///
     /// `TurnComplete.last_agent_message` is a fallback source: use it only when no earlier
@@ -1795,6 +1796,25 @@ fn hook_completed_event_from_notification(
         turn_id: notification.turn_id,
         run: hook_run_summary_from_notification(notification.run),
     }
+}
+
+fn hook_work_summary(run: &codex_protocol::protocol::HookRunSummary) -> String {
+    format!("{:?} hook", run.event_name)
+}
+
+fn hook_work_detail(run: &codex_protocol::protocol::HookRunSummary) -> String {
+    let mut parts = vec![format!("{:?}", run.status).to_ascii_lowercase()];
+    if let Some(duration_ms) = run.duration_ms {
+        parts.push(format!("{duration_ms}ms"));
+    }
+    if let Some(message) = run
+        .status_message
+        .as_deref()
+        .filter(|message| !message.trim().is_empty())
+    {
+        parts.push(message.to_string());
+    }
+    parts.join(" · ")
 }
 
 fn app_server_request_id_to_mcp_request_id(
@@ -2952,6 +2972,7 @@ impl ChatWidget {
         self.had_work_activity = false;
         self.latest_proposed_plan_markdown = None;
         self.latest_work_state_progress.clear();
+        self.latest_work_state_active_hooks.clear();
         self.plan_delta_buffer.clear();
         self.plan_item_active = false;
         self.adaptive_chunking.reset();
@@ -4136,6 +4157,7 @@ impl ChatWidget {
             self.latest_work_state_checklist.clear();
             self.latest_work_state_progress.clear();
             self.latest_work_state_subagents.clear();
+            self.latest_work_state_active_hooks.clear();
         }
         self.turn_sleep_inhibitor
             .set_turn_running(self.agent_turn_running);
@@ -5101,6 +5123,9 @@ impl ChatWidget {
     fn on_hook_started(&mut self, event: codex_protocol::protocol::HookStartedEvent) {
         self.flush_answer_stream_with_separator();
         self.flush_completed_hook_output();
+        self.latest_work_state_active_hooks
+            .insert(event.run.id.clone(), hook_work_summary(&event.run));
+        self.add_work_progress("hook started".to_string(), hook_work_summary(&event.run));
         match self.active_hook_cell.as_mut() {
             Some(cell) => {
                 cell.start_run(event.run);
@@ -5119,6 +5144,8 @@ impl ChatWidget {
 
     fn on_hook_completed(&mut self, event: codex_protocol::protocol::HookCompletedEvent) {
         let completed = event.run;
+        self.latest_work_state_active_hooks.remove(&completed.id);
+        self.add_work_progress("hook completed".to_string(), hook_work_detail(&completed));
         let completed_existing_run = self
             .active_hook_cell
             .as_mut()
@@ -5954,6 +5981,7 @@ impl ChatWidget {
             latest_work_state_checklist: Vec::new(),
             latest_work_state_progress: Vec::new(),
             latest_work_state_subagents: Vec::new(),
+            latest_work_state_active_hooks: HashMap::new(),
             saw_copy_source_this_turn: false,
             mcp_startup_expected_servers: None,
             mcp_startup_ignore_updates_until_next_start: false,
@@ -7289,6 +7317,10 @@ impl ChatWidget {
             }
             ThreadItem::ContextCompaction { .. } => {
                 self.add_info_message("Context compacted".to_string(), /*hint*/ None);
+                self.add_work_progress(
+                    "context compacted".to_string(),
+                    "history summarized".to_string(),
+                );
             }
             ThreadItem::HookPrompt { .. } => {}
             ThreadItem::CollabAgentToolCall {
@@ -8580,6 +8612,8 @@ impl ChatWidget {
             active_phase: Some(self.current_status.header.clone()),
             active_tool_summary: self.current_status.details.clone(),
             pending_approval_summary: self.bottom_pane.pending_approval_summary(),
+            context_summary: self.work_state_context_summary(),
+            active_hook_summary: self.work_state_active_hook_summary(),
             continuity_status,
             proposed_plan_markdown: self.latest_work_state_proposed_plan_markdown.clone(),
             checklist: self.latest_work_state_checklist.clone(),
@@ -8591,6 +8625,41 @@ impl ChatWidget {
             background_summary: self.bottom_pane.background_terminal_summary(),
         });
         self.request_redraw();
+    }
+
+    fn work_state_context_summary(&self) -> Option<String> {
+        let context_window = self.status_line_context_window_size()?;
+        let usage = self
+            .token_info
+            .as_ref()
+            .map(|info| info.last_token_usage.clone())
+            .unwrap_or_default();
+        let used = usage.tokens_in_context_window();
+        let used_percent = 100 - usage.percent_of_context_window_remaining(context_window);
+        Some(format!(
+            "{}% used · {}/{}",
+            used_percent.clamp(0, 100),
+            format_tokens_compact(used),
+            format_tokens_compact(context_window)
+        ))
+    }
+
+    fn work_state_active_hook_summary(&self) -> Option<String> {
+        let count = self.latest_work_state_active_hooks.len();
+        if count == 0 {
+            return None;
+        }
+        let first = self
+            .latest_work_state_active_hooks
+            .values()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| "hook".to_string());
+        if count == 1 {
+            Some(format!("1 running · {first}"))
+        } else {
+            Some(format!("{count} running · {first}"))
+        }
     }
 
     pub(crate) fn set_pending_thread_approvals(&mut self, threads: Vec<String>) {

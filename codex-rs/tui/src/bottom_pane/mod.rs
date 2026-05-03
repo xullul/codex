@@ -203,6 +203,7 @@ fn pluralize_count(count: usize, singular: &str) -> String {
 struct DelayedApprovalRequest {
     request: ApprovalRequest,
     features: Features,
+    enqueued_at: Instant,
 }
 
 /// Pane displayed in the lower half of the chat UI.
@@ -537,15 +538,16 @@ impl BottomPane {
         let Some(first) = self.delayed_approval_requests.pop_front() else {
             return;
         };
-        let mut modal = ApprovalOverlay::new(
+        let mut modal = ApprovalOverlay::new_with_enqueue_time(
             first.request,
+            first.enqueued_at,
             self.app_event_tx.clone(),
             first.features,
             self.keymap.approval.clone(),
             self.keymap.list.clone(),
         );
         while let Some(delayed) = self.delayed_approval_requests.pop_back() {
-            modal.enqueue_request(delayed.request);
+            modal.enqueue_request_at(delayed.request, delayed.enqueued_at);
         }
         self.pause_status_timer_for_modal();
         self.push_view(Box::new(modal));
@@ -1125,21 +1127,39 @@ impl BottomPane {
     }
 
     pub(crate) fn pending_approval_summary(&self) -> Option<String> {
+        let now = Instant::now();
+        if let Some(summary) = self
+            .view_stack
+            .last()
+            .and_then(|view| view.pending_approval_summary(now))
+        {
+            return Some(summary);
+        }
         let delayed = self.delayed_approval_requests.len();
         let inactive_threads = self.pending_thread_approvals.len();
+        let oldest_wait = self.delayed_approval_requests.front().map(|request| {
+            format!(
+                "; oldest {}",
+                crate::status_indicator_widget::fmt_elapsed_compact(
+                    now.saturating_duration_since(request.enqueued_at).as_secs()
+                )
+            )
+        });
         match (delayed, inactive_threads) {
             (0, 0) => None,
             (delayed, 0) => Some(format!(
-                "{} waiting in this thread",
-                pluralize_count(delayed, "approval")
+                "{} waiting in this thread{}",
+                pluralize_count(delayed, "approval"),
+                oldest_wait.unwrap_or_default()
             )),
             (0, inactive_threads) => Some(format!(
                 "{} with pending approvals",
                 pluralize_count(inactive_threads, "inactive thread")
             )),
             (delayed, inactive_threads) => Some(format!(
-                "{} waiting here; {} with pending approvals",
+                "{} waiting here{}; {} with pending approvals",
                 pluralize_count(delayed, "approval"),
+                oldest_wait.unwrap_or_default(),
                 pluralize_count(inactive_threads, "inactive thread")
             )),
         }
@@ -1263,6 +1283,7 @@ impl BottomPane {
                 .push_back(DelayedApprovalRequest {
                     request,
                     features: features.clone(),
+                    enqueued_at: now,
                 });
             self.maybe_show_delayed_approval_requests_at(now);
         } else {
