@@ -3,6 +3,7 @@ use codex_protocol::protocol::McpStartupCompleteEvent;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use pretty_assertions::assert_eq;
+use std::time::Instant;
 
 #[tokio::test]
 async fn mcp_tool_call_updates_live_status_snapshot() {
@@ -53,7 +54,7 @@ async fn mcp_tool_call_updates_live_status_snapshot() {
 }
 
 #[tokio::test]
-async fn mcp_tool_call_end_restores_working_status() {
+async fn mcp_tool_call_end_keeps_fast_status_readable() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.handle_codex_event(Event {
@@ -106,9 +107,91 @@ async fn mcp_tool_call_end_restores_working_status() {
     assert_eq!(
         chat.bottom_pane
             .status_widget()
+            .expect("fast tool status should remain readable")
+            .header(),
+        "Using github.search"
+    );
+    assert!(chat.retained_live_tool_hint.is_some());
+
+    chat.retained_live_tool_hint
+        .as_mut()
+        .expect("retained hint")
+        .expires_at = Instant::now();
+    chat.pre_draw_tick();
+
+    assert_eq!(
+        chat.bottom_pane
+            .status_widget()
             .expect("status should stay visible while turn is running")
             .header(),
         "Working"
+    );
+    assert_eq!(chat.retained_live_tool_hint, None);
+}
+
+#[tokio::test]
+async fn mcp_tool_call_begin_replaces_retained_fast_status() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_codex_event(Event {
+        id: "turn-1".into(),
+        msg: EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }),
+    });
+    let first = McpInvocation {
+        server: "github".to_string(),
+        tool: "search".to_string(),
+        arguments: Some(json!({"query":"status row"})),
+    };
+    chat.handle_codex_event(Event {
+        id: "mcp-call-1".into(),
+        msg: EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            call_id: "mcp-call-1".to_string(),
+            invocation: first.clone(),
+            mcp_app_resource_uri: None,
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "mcp-call-1".into(),
+        msg: EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+            call_id: "mcp-call-1".to_string(),
+            invocation: first,
+            mcp_app_resource_uri: None,
+            duration: std::time::Duration::from_millis(12),
+            result: Ok(codex_protocol::mcp::CallToolResult {
+                content: Vec::new(),
+                is_error: None,
+                structured_content: None,
+                meta: None,
+            }),
+        }),
+    });
+    assert!(chat.retained_live_tool_hint.is_some());
+
+    chat.handle_codex_event(Event {
+        id: "mcp-call-2".into(),
+        msg: EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            call_id: "mcp-call-2".to_string(),
+            invocation: McpInvocation {
+                server: "drive".to_string(),
+                tool: "read".to_string(),
+                arguments: None,
+            },
+            mcp_app_resource_uri: None,
+        }),
+    });
+
+    assert_eq!(chat.retained_live_tool_hint, None);
+    assert_eq!(
+        chat.bottom_pane
+            .status_widget()
+            .expect("status should show the new tool")
+            .header(),
+        "Using drive.read"
     );
 }
 

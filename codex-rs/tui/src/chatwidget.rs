@@ -455,6 +455,7 @@ const USER_SHELL_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it l
 const USER_SHELL_COMMAND_HELP_HINT: &str = "Example: !ls";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_STATUS_LINE_ITEMS: [&str; 2] = ["model-with-reasoning", "current-dir"];
+const MIN_READABLE_LIVE_TOOL_HINT: Duration = Duration::from_millis(700);
 // Track information about an in-flight exec command.
 struct RunningCommand {
     command: Vec<String>,
@@ -823,12 +824,19 @@ impl StatusIndicatorState {
 struct RunningMcpToolCall {
     invocation: McpInvocation,
     started_order: u64,
+    started_at: Instant,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct RunningMcpToolActivity {
     calls: HashMap<String, RunningMcpToolCall>,
     sequence: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RetainedLiveToolHint {
+    status: StatusIndicatorState,
+    expires_at: Instant,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -992,6 +1000,8 @@ pub(crate) struct ChatWidget {
     running_commands: HashMap<String, RunningCommand>,
     running_command_sequence: u64,
     running_mcp_tool_activity: Box<RunningMcpToolActivity>,
+    running_web_searches: HashMap<String, Instant>,
+    retained_live_tool_hint: Option<RetainedLiveToolHint>,
     collab_agent_metadata: HashMap<ThreadId, CollabAgentMetadata>,
     pending_collab_spawn_requests: HashMap<String, multi_agents::SpawnRequestSummary>,
     suppressed_exec_calls: HashSet<String>,
@@ -2297,6 +2307,7 @@ impl ChatWidget {
             details: details.clone(),
             details_max_lines,
         };
+        self.retained_live_tool_hint = None;
         self.bottom_pane.update_status(
             header,
             details,
@@ -2427,6 +2438,9 @@ impl ChatWidget {
     }
 
     fn restore_status_after_tool_activity(&mut self) {
+        if self.retained_live_tool_hint_still_visible(Instant::now()) {
+            return;
+        }
         if self.refresh_running_mcp_tool_status() || self.refresh_running_exec_status() {
             return;
         }
@@ -2434,6 +2448,64 @@ impl ChatWidget {
             return;
         }
         self.restore_reasoning_status_header();
+    }
+
+    fn retained_live_tool_hint_still_visible(&mut self, now: Instant) -> bool {
+        let Some(retained) = self.retained_live_tool_hint.as_ref() else {
+            return false;
+        };
+        if retained.expires_at <= now {
+            self.retained_live_tool_hint = None;
+            return false;
+        }
+        self.frame_requester
+            .schedule_frame_in(retained.expires_at.saturating_duration_since(now));
+        true
+    }
+
+    fn retain_current_live_tool_hint_if_fast(&mut self, started_at: Option<Instant>) -> bool {
+        if !self.bottom_pane.is_task_running()
+            || self.running_exec_status().is_some()
+            || self.running_mcp_tool_status().is_some()
+            || self.current_status.is_guardian_review()
+        {
+            return false;
+        }
+
+        let Some(started_at) = started_at else {
+            return false;
+        };
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(started_at);
+        let Some(remaining) = MIN_READABLE_LIVE_TOOL_HINT.checked_sub(elapsed) else {
+            return false;
+        };
+        if remaining.is_zero() {
+            return false;
+        }
+
+        self.retained_live_tool_hint = Some(RetainedLiveToolHint {
+            status: self.current_status.clone(),
+            expires_at: now + remaining,
+        });
+        self.frame_requester.schedule_frame_in(remaining);
+        true
+    }
+
+    fn expire_retained_live_tool_hint_if_due(&mut self, now: Instant) {
+        let Some(retained) = self.retained_live_tool_hint.clone() else {
+            return;
+        };
+        if retained.expires_at > now {
+            self.frame_requester
+                .schedule_frame_in(retained.expires_at.saturating_duration_since(now));
+            return;
+        }
+
+        self.retained_live_tool_hint = None;
+        if self.current_status == retained.status && self.bottom_pane.is_task_running() {
+            self.restore_status_after_tool_activity();
+        }
     }
 
     /// Sets the currently rendered footer status-line value.
@@ -3159,6 +3231,8 @@ impl ChatWidget {
         self.update_task_running_state();
         self.running_commands.clear();
         self.running_mcp_tool_activity.calls.clear();
+        self.running_web_searches.clear();
+        self.retained_live_tool_hint = None;
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
         self.unified_exec_wait_streak = None;
@@ -4895,6 +4969,9 @@ impl ChatWidget {
     fn on_web_search_begin(&mut self, ev: WebSearchBeginEvent) {
         self.flush_answer_stream_with_separator();
         self.add_work_progress("web search started".to_string(), ev.call_id.clone());
+        self.retained_live_tool_hint = None;
+        self.running_web_searches
+            .insert(ev.call_id.clone(), Instant::now());
         self.set_status(
             "Searching web".to_string(),
             /*details*/ None,
@@ -4918,6 +4995,7 @@ impl ChatWidget {
             query,
             action,
         } = ev;
+        let started_at = self.running_web_searches.remove(&call_id);
         self.add_work_progress(
             "web search finished".to_string(),
             web_search_detail(Some(&action), &query),
@@ -4940,6 +5018,11 @@ impl ChatWidget {
             self.add_to_history(history_cell::new_web_search_call(call_id, query, action));
         }
         self.had_work_activity = true;
+        if self.bottom_pane.is_task_running()
+            && !self.retain_current_live_tool_hint_if_fast(started_at)
+        {
+            self.restore_status_after_tool_activity();
+        }
     }
 
     fn on_collab_event(&mut self, cell: PlainHistoryCell) {
@@ -5372,6 +5455,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {
+        self.expire_retained_live_tool_hint_if_due(Instant::now());
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.bottom_pane.pre_draw_tick();
@@ -5545,6 +5629,7 @@ impl ChatWidget {
         if self.suppressed_exec_calls.remove(&ev.call_id) {
             return;
         }
+        let started_at = running.as_ref().map(|running| running.started_at);
         let (command, parsed, source) = match running {
             Some(rc) => (rc.command, rc.parsed_cmd, rc.source),
             None => (ev.command.clone(), ev.parsed_cmd.clone(), ev.source),
@@ -5647,7 +5732,9 @@ impl ChatWidget {
         // Mark that actual work was done (command executed)
         self.had_work_activity = true;
         if self.bottom_pane.is_task_running() {
-            self.restore_status_after_tool_activity();
+            if !self.retain_current_live_tool_hint_if_fast(started_at) {
+                self.restore_status_after_tool_activity();
+            }
         }
         if is_user_shell {
             self.maybe_send_next_queued_input();
@@ -5670,6 +5757,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_exec_approval_now(&mut self, ev: ExecApprovalRequestEvent) {
         self.flush_answer_stream_with_separator();
+        self.retained_live_tool_hint = None;
         let command = shlex::try_join(ev.command.iter().map(String::as_str))
             .unwrap_or_else(|_| ev.command.join(" "));
         self.notify(Notification::ExecApprovalRequested { command });
@@ -5692,6 +5780,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_apply_patch_approval_now(&mut self, ev: ApplyPatchApprovalRequestEvent) {
         self.flush_answer_stream_with_separator();
+        self.retained_live_tool_hint = None;
 
         let request = ApprovalRequest::ApplyPatch {
             thread_id: self.thread_id.unwrap_or_default(),
@@ -5712,6 +5801,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_elicitation_request_now(&mut self, ev: ElicitationRequestEvent) {
         self.flush_answer_stream_with_separator();
+        self.retained_live_tool_hint = None;
 
         self.notify(Notification::ElicitationRequested {
             server_name: ev.server_name.clone(),
@@ -5736,6 +5826,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn push_approval_request(&mut self, request: ApprovalRequest) {
+        self.retained_live_tool_hint = None;
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
         self.request_redraw();
@@ -5745,6 +5836,7 @@ impl ChatWidget {
         &mut self,
         request: McpServerElicitationFormRequest,
     ) {
+        self.retained_live_tool_hint = None;
         self.bottom_pane
             .push_mcp_server_elicitation_request(request);
         self.request_redraw();
@@ -5752,6 +5844,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_request_user_input_now(&mut self, ev: RequestUserInputEvent) {
         self.flush_answer_stream_with_separator();
+        self.retained_live_tool_hint = None;
         let question_count = ev.questions.len();
         let summary = Notification::user_input_request_summary(&ev.questions);
         let title = match (question_count, summary.as_deref()) {
@@ -5766,6 +5859,7 @@ impl ChatWidget {
 
     pub(crate) fn handle_request_permissions_now(&mut self, ev: RequestPermissionsEvent) {
         self.flush_answer_stream_with_separator();
+        self.retained_live_tool_hint = None;
         let request = ApprovalRequest::Permissions {
             thread_id: self.thread_id.unwrap_or_default(),
             thread_label: None,
@@ -5783,6 +5877,7 @@ impl ChatWidget {
         self.bottom_pane.ensure_status_indicator();
         let parsed_cmd = self.annotate_skill_reads_in_parsed_cmd(ev.parsed_cmd.clone());
         let interaction_input = ev.interaction_input.clone();
+        self.retained_live_tool_hint = None;
         self.running_command_sequence = self.running_command_sequence.saturating_add(1);
         let started_order = self.running_command_sequence;
         self.running_commands.insert(
@@ -5854,6 +5949,7 @@ impl ChatWidget {
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
         self.flush_answer_stream_with_separator();
         self.bottom_pane.ensure_status_indicator();
+        self.retained_live_tool_hint = None;
         self.add_work_progress(
             "mcp tool started".to_string(),
             Self::mcp_tool_work_detail(&ev.invocation),
@@ -5865,6 +5961,7 @@ impl ChatWidget {
             RunningMcpToolCall {
                 invocation: ev.invocation.clone(),
                 started_order: running_mcp_tool_activity.sequence,
+                started_at: Instant::now(),
             },
         );
         self.refresh_running_mcp_tool_status();
@@ -5891,7 +5988,11 @@ impl ChatWidget {
             "mcp tool finished".to_string(),
             Self::mcp_tool_work_detail(&invocation),
         );
-        self.running_mcp_tool_activity.calls.remove(&call_id);
+        let started_at = self
+            .running_mcp_tool_activity
+            .calls
+            .remove(&call_id)
+            .map(|running| running.started_at);
 
         let extra_cell = match self
             .active_cell
@@ -5919,7 +6020,9 @@ impl ChatWidget {
         // Mark that actual work was done (MCP tool call)
         self.had_work_activity = true;
         if self.bottom_pane.is_task_running() {
-            self.restore_status_after_tool_activity();
+            if !self.retain_current_live_tool_hint_if_fast(started_at) {
+                self.restore_status_after_tool_activity();
+            }
         }
     }
 
@@ -6040,6 +6143,8 @@ impl ChatWidget {
             running_commands: HashMap::new(),
             running_command_sequence: 0,
             running_mcp_tool_activity: Box::default(),
+            running_web_searches: HashMap::new(),
+            retained_live_tool_hint: None,
             collab_agent_metadata: HashMap::new(),
             pending_collab_spawn_requests: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),

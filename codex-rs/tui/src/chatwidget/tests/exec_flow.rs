@@ -1,5 +1,37 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use std::time::Instant;
+
+#[tokio::test]
+async fn fast_exec_status_remains_readable_until_expiry() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_codex_event(Event {
+        id: "turn-1".into(),
+        msg: EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }),
+    });
+    let begin = begin_exec(&mut chat, "call-fast", "cat foo.txt");
+    let running_status = chat.current_status.clone();
+
+    end_exec(&mut chat, begin, "hello", "", /*exit_code*/ 0);
+
+    assert_eq!(chat.current_status, running_status);
+    assert!(chat.retained_live_tool_hint.is_some());
+
+    chat.retained_live_tool_hint
+        .as_mut()
+        .expect("retained hint")
+        .expires_at = Instant::now();
+    chat.pre_draw_tick();
+
+    assert_eq!(chat.current_status.header, "Working");
+    assert_eq!(chat.retained_live_tool_hint, None);
+}
 
 #[tokio::test]
 async fn exec_approval_emits_proposed_command_and_decision_history() {

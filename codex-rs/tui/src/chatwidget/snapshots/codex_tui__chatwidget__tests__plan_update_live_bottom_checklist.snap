@@ -3,6 +3,7 @@ source: tui/src/chatwidget/tests/plan_mode.rs
 expression: popup
 ---
 • Working (0s • esc to interrupt)
+  └ step 2/3: Render live plan progress in the bottom pane
 • Plan 1/3 complete · /work
   ✓ Explore Claude Code task surfaces
   › Render live plan progress in the bottom pane

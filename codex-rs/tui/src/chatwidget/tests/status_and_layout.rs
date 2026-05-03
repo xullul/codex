@@ -1,6 +1,51 @@
 use super::*;
 use crate::bottom_pane::goal_status_indicator_line;
 use pretty_assertions::assert_eq;
+use std::time::Instant;
+
+#[tokio::test]
+async fn fast_web_search_status_remains_readable_until_expiry() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_codex_event(Event {
+        id: "turn-1".into(),
+        msg: EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "web-1".into(),
+        msg: EventMsg::WebSearchBegin(WebSearchBeginEvent {
+            call_id: "web-1".to_string(),
+        }),
+    });
+    chat.handle_codex_event(Event {
+        id: "web-1".into(),
+        msg: EventMsg::WebSearchEnd(WebSearchEndEvent {
+            call_id: "web-1".to_string(),
+            query: "codex status row".to_string(),
+            action: codex_protocol::models::WebSearchAction::Search {
+                query: Some("codex status row".to_string()),
+                queries: None,
+            },
+        }),
+    });
+
+    assert_eq!(chat.current_status.header, "Searching web");
+    assert!(chat.retained_live_tool_hint.is_some());
+
+    chat.retained_live_tool_hint
+        .as_mut()
+        .expect("retained hint")
+        .expires_at = Instant::now();
+    chat.pre_draw_tick();
+
+    assert_eq!(chat.current_status.header, "Working");
+    assert_eq!(chat.retained_live_tool_hint, None);
+}
 
 /// Receiving a TokenCount event without usage clears the context indicator.
 #[tokio::test]

@@ -1668,7 +1668,7 @@ async fn plan_update_renders_history_cell() {
     );
     let blob = lines_to_single_string(cells.last().unwrap());
     assert!(
-        blob.contains("Updated Plan"),
+        blob.contains("Plan 1/3 complete"),
         "missing plan header: {blob:?}"
     );
     assert!(blob.contains("Explore codebase"));
