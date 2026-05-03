@@ -4668,6 +4668,7 @@ impl ChatWidget {
 
     fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
         self.flush_answer_stream_with_separator();
+        self.add_work_progress("image viewed".to_string(), event.path.display().to_string());
         self.add_to_history(history_cell::new_view_image_tool_call(
             event.path,
             &self.config.cwd,

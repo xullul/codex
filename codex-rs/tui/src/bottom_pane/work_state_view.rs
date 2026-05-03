@@ -90,7 +90,7 @@ enum WorkActivityKind {
     FileEdits,
     McpTools,
     WebSearch,
-    ImageGeneration,
+    Images,
     Hooks,
     ContextCompaction,
     RepoIntel,
@@ -103,7 +103,7 @@ impl WorkActivityKind {
             Self::FileEdits => "File edits",
             Self::McpTools => "MCP tools",
             Self::WebSearch => "Web search",
-            Self::ImageGeneration => "Image generation",
+            Self::Images => "Images",
             Self::Hooks => "Hooks",
             Self::ContextCompaction => "Context",
             Self::RepoIntel => "Repo intel",
@@ -580,7 +580,7 @@ fn work_activity_rows(progress: &[WorkProgressRow]) -> Vec<WorkActivityRow> {
         WorkActivityBucket::new(WorkActivityKind::FileEdits),
         WorkActivityBucket::new(WorkActivityKind::McpTools),
         WorkActivityBucket::new(WorkActivityKind::WebSearch),
-        WorkActivityBucket::new(WorkActivityKind::ImageGeneration),
+        WorkActivityBucket::new(WorkActivityKind::Images),
         WorkActivityBucket::new(WorkActivityKind::Hooks),
         WorkActivityBucket::new(WorkActivityKind::ContextCompaction),
         WorkActivityBucket::new(WorkActivityKind::RepoIntel),
@@ -607,7 +607,9 @@ fn work_activity_kind(label: &str) -> Option<WorkActivityKind> {
         "editing files" | "edited files" => Some(WorkActivityKind::FileEdits),
         "mcp tool started" | "mcp tool finished" => Some(WorkActivityKind::McpTools),
         "web search started" | "web search finished" => Some(WorkActivityKind::WebSearch),
-        "image generation started" | "image generated" => Some(WorkActivityKind::ImageGeneration),
+        "image generation started" | "image generated" | "image viewed" => {
+            Some(WorkActivityKind::Images)
+        }
         "hook started" | "hook completed" => Some(WorkActivityKind::Hooks),
         "context compacted" => Some(WorkActivityKind::ContextCompaction),
         "repo intel" | "repo intel skipped" | "repo intel failed" => {

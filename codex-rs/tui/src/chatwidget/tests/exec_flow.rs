@@ -1044,6 +1044,14 @@ async fn view_image_tool_call_adds_history_cell() {
         }),
     });
 
+    let expected_image_path = chat.config.cwd.join("example.png").display().to_string();
+    let progress = chat
+        .latest_work_state_progress
+        .last()
+        .expect("image view should record work progress");
+    assert_eq!(progress.label, "image viewed");
+    assert_eq!(progress.detail, expected_image_path);
+
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected a single history cell");
     let combined = lines_to_single_string(&cells[0]);

@@ -214,10 +214,22 @@ impl SubagentActivityTracker {
             return false;
         };
 
+        let detail = if !update.state.is_active() && update.detail.is_none() {
+            let previous_summary = record.summary.trim();
+            record.detail.clone().or_else(|| {
+                (!previous_summary.is_empty()
+                    && !previous_summary.eq_ignore_ascii_case(record.state.label())
+                    && !matches!(previous_summary, "starting" | "running"))
+                .then(|| record.summary.clone())
+            })
+        } else {
+            update.detail
+        };
+
         let changed = record.label != label
             || record.state != update.state
             || record.summary != update.summary
-            || record.detail != update.detail
+            || record.detail != detail
             || metadata.count_tool
             || metadata
                 .last_activity_at
@@ -225,7 +237,7 @@ impl SubagentActivityTracker {
         record.label = label;
         record.state = update.state;
         record.summary = update.summary;
-        record.detail = update.detail;
+        record.detail = detail;
         if metadata.count_tool {
             record.tool_count = record.tool_count.saturating_add(1);
         }
@@ -880,6 +892,60 @@ mod tests {
                 detail: None,
                 tool_count: 0,
                 last_activity: None,
+                token_summary: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn terminal_subagent_turn_keeps_last_activity_detail() {
+        let mut tracker = SubagentActivityTracker::default();
+        let primary_id = thread_id(1);
+        let agent_id = thread_id(2);
+
+        tracker.note_notification(
+            agent_id,
+            "Huygens [explorer]".to_string(),
+            &ServerNotification::ItemCompleted(
+                codex_app_server_protocol::ItemCompletedNotification {
+                    thread_id: agent_id.to_string(),
+                    turn_id: "turn-1".to_string(),
+                    item: command_item(
+                        "rg -n \"subagent\" codex-rs/tui/src",
+                        CommandExecutionStatus::Completed,
+                    ),
+                },
+            ),
+        );
+
+        tracker.note_notification(
+            agent_id,
+            "Huygens [explorer]".to_string(),
+            &ServerNotification::TurnCompleted(
+                codex_app_server_protocol::TurnCompletedNotification {
+                    thread_id: agent_id.to_string(),
+                    turn: Turn {
+                        id: "turn-1".to_string(),
+                        items: Vec::new(),
+                        status: TurnStatus::Completed,
+                        error: None,
+                        started_at: None,
+                        completed_at: None,
+                        duration_ms: None,
+                    },
+                },
+            ),
+        );
+
+        assert_eq!(
+            tracker.rows(Some(primary_id), Some(primary_id)),
+            vec![SubagentActivityRow {
+                label: "Huygens [explorer]".to_string(),
+                state: SubagentActivityState::Completed,
+                summary: "finished".to_string(),
+                detail: Some("subagent in codex-rs/tui/src".to_string()),
+                tool_count: 0,
+                last_activity: Some("last 0s ago".to_string()),
                 token_summary: None,
             }]
         );
