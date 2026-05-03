@@ -315,19 +315,17 @@ impl AgentControl {
 
         self.send_input(new_thread.thread_id, initial_operation)
             .await?;
-        if !new_thread.thread.enabled(Feature::MultiAgentV2) {
-            let child_reference = agent_metadata
-                .agent_path
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| new_thread.thread_id.to_string());
-            self.maybe_start_completion_watcher(
-                new_thread.thread_id,
-                notification_source,
-                child_reference,
-                agent_metadata.agent_path.clone(),
-            );
-        }
+        let child_reference = agent_metadata
+            .agent_path
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| new_thread.thread_id.to_string());
+        self.maybe_start_completion_watcher(
+            new_thread.thread_id,
+            notification_source,
+            child_reference,
+            agent_metadata.agent_path.clone(),
+        );
 
         Ok(LiveAgent {
             thread_id: new_thread.thread_id,
@@ -1001,15 +999,42 @@ impl AgentControl {
                 let _ = control
                     .send_inter_agent_communication(parent_thread_id, communication)
                     .await;
+                control
+                    .auto_close_finished_agent(child_thread_id, &status)
+                    .await;
                 return;
             }
             let Ok(parent_thread) = state.get_thread(parent_thread_id).await else {
+                control
+                    .auto_close_finished_agent(child_thread_id, &status)
+                    .await;
                 return;
             };
             parent_thread
                 .inject_user_message_without_turn(message)
                 .await;
+            control
+                .auto_close_finished_agent(child_thread_id, &status)
+                .await;
         });
+    }
+
+    async fn auto_close_finished_agent(&self, agent_id: ThreadId, status: &AgentStatus) {
+        if matches!(status, AgentStatus::Completed(_) | AgentStatus::Errored(_))
+            && let Ok(state) = self.upgrade()
+            && let Ok(thread) = state.get_thread(agent_id).await
+            && let Some(state_db_ctx) = thread.state_db()
+            && let Err(err) = state_db_ctx
+                .set_thread_spawn_edge_status(agent_id, DirectionalThreadSpawnEdgeStatus::Closed)
+                .await
+        {
+            warn!("failed to persist completed thread-spawn edge status for {agent_id}: {err}");
+        }
+
+        match self.shutdown_live_agent(agent_id).await {
+            Ok(_) | Err(CodexErr::ThreadNotFound(_)) | Err(CodexErr::InternalAgentDied) => {}
+            Err(err) => warn!("failed to auto-close completed subagent {agent_id}: {err}"),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

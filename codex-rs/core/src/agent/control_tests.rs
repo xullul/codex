@@ -1192,12 +1192,33 @@ async fn spawn_child_completion_notifies_parent_history() {
         .get_thread(child_thread_id)
         .await
         .expect("child thread should exist");
-    let _ = child_thread
-        .submit(Op::Shutdown {})
-        .await
-        .expect("child shutdown should submit");
+    let child_turn = child_thread.codex.session.new_default_turn().await;
+    child_thread
+        .codex
+        .session
+        .send_event(
+            child_turn.as_ref(),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: child_turn.sub_id.clone(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )
+        .await;
 
     assert_eq!(wait_for_subagent_notification(&parent_thread).await, true);
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if harness.control.get_status(child_thread_id).await == AgentStatus::NotFound {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("completed child should auto-close");
 }
 
 #[tokio::test]

@@ -5731,11 +5731,10 @@ impl ChatWidget {
         }
         // Mark that actual work was done (command executed)
         self.had_work_activity = true;
-        if self.bottom_pane.is_task_running() {
-            if !self.retain_current_live_tool_hint_if_fast(started_at) {
+        if self.bottom_pane.is_task_running()
+            && !self.retain_current_live_tool_hint_if_fast(started_at) {
                 self.restore_status_after_tool_activity();
             }
-        }
         if is_user_shell {
             self.maybe_send_next_queued_input();
         }
@@ -6019,11 +6018,10 @@ impl ChatWidget {
         }
         // Mark that actual work was done (MCP tool call)
         self.had_work_activity = true;
-        if self.bottom_pane.is_task_running() {
-            if !self.retain_current_live_tool_hint_if_fast(started_at) {
+        if self.bottom_pane.is_task_running()
+            && !self.retain_current_live_tool_hint_if_fast(started_at) {
                 self.restore_status_after_tool_activity();
             }
-        }
     }
 
     pub(crate) fn new_with_app_event(common: ChatWidgetInit) -> Self {

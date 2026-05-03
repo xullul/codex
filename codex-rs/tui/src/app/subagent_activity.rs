@@ -128,15 +128,7 @@ impl SubagentActivityTracker {
                     ActivityMetadataUpdate::default(),
                 )
             }
-            ServerNotification::TurnCompleted(notification) => self.upsert(
-                thread_id,
-                label,
-                turn_completed_update(
-                    notification.turn.status.clone(),
-                    notification.turn.error.as_ref(),
-                ),
-                ActivityMetadataUpdate::default(),
-            ),
+            ServerNotification::TurnCompleted(_) => self.remove(thread_id),
             ServerNotification::ThreadClosed(_) => self.remove(thread_id),
             _ => false,
         }
@@ -840,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_subagent_turn_keeps_completed_activity_row() {
+    fn terminal_subagent_turn_clears_activity_row() {
         let mut tracker = SubagentActivityTracker::default();
         let primary_id = thread_id(1);
         let agent_id = thread_id(2);
@@ -883,22 +875,11 @@ mod tests {
             ),
         );
 
-        assert_eq!(
-            tracker.rows(Some(primary_id), Some(primary_id)),
-            vec![SubagentActivityRow {
-                label: "Huygens [explorer]".to_string(),
-                state: SubagentActivityState::Completed,
-                summary: "finished".to_string(),
-                detail: None,
-                tool_count: 0,
-                last_activity: None,
-                token_summary: None,
-            }]
-        );
+        assert_eq!(tracker.rows(Some(primary_id), Some(primary_id)), Vec::new());
     }
 
     #[test]
-    fn terminal_subagent_turn_keeps_last_activity_detail() {
+    fn terminal_subagent_turn_clears_last_activity_detail() {
         let mut tracker = SubagentActivityTracker::default();
         let primary_id = thread_id(1);
         let agent_id = thread_id(2);
@@ -937,17 +918,6 @@ mod tests {
             ),
         );
 
-        assert_eq!(
-            tracker.rows(Some(primary_id), Some(primary_id)),
-            vec![SubagentActivityRow {
-                label: "Huygens [explorer]".to_string(),
-                state: SubagentActivityState::Completed,
-                summary: "finished".to_string(),
-                detail: Some("subagent in codex-rs/tui/src".to_string()),
-                tool_count: 0,
-                last_activity: Some("last 0s ago".to_string()),
-                token_summary: None,
-            }]
-        );
+        assert_eq!(tracker.rows(Some(primary_id), Some(primary_id)), Vec::new());
     }
 }
