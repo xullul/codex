@@ -162,6 +162,8 @@ pub enum Feature {
     UnavailableDummyTools,
     /// Enable discoverable tool suggestions for apps.
     ToolSuggest,
+    /// Enable gated read-only repository exploration tools.
+    RepoExploreTools,
     /// Enable plugins.
     Plugins,
     /// Enable plugin-bundled lifecycle hooks.
@@ -889,6 +891,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ToolSuggest,
         key: "tool_suggest",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::RepoExploreTools,
+        key: "repo_explore_tools",
         stage: Stage::Stable,
         default_enabled: true,
     },

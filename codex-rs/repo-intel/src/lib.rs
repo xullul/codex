@@ -44,6 +44,7 @@ pub struct RepoIntelSnapshot {
     pub git: RepoIntelGit,
     pub project_kinds: Vec<String>,
     pub languages: Vec<RepoIntelLanguage>,
+    pub codebase_map: RepoIntelCodebaseMap,
     pub manifests: Vec<RepoIntelFile>,
     pub docs: Vec<RepoIntelFile>,
     pub commands: Vec<String>,
@@ -74,6 +75,47 @@ impl RepoIntelSnapshot {
             out.push_str("Languages by file count:\n");
             for language in &self.languages {
                 out.push_str(&format!("- {}: {}\n", language.name, language.files));
+            }
+        }
+        if !self.codebase_map.roots.is_empty() {
+            out.push_str("Workspace/project roots:\n");
+            for root in &self.codebase_map.roots {
+                out.push_str(&format!(
+                    "- {} ({})",
+                    root.path,
+                    root.manifest_kind.as_deref().unwrap_or("project")
+                ));
+                if !root.languages.is_empty() {
+                    let languages = root
+                        .languages
+                        .iter()
+                        .map(|language| format!("{} {}", language.name, language.files))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("; languages: {languages}"));
+                }
+                out.push('\n');
+            }
+        }
+        if !self.codebase_map.top_directories.is_empty() {
+            out.push_str("Top directory clusters:\n");
+            for directory in &self.codebase_map.top_directories {
+                out.push_str(&format!(
+                    "- {}: {} files\n",
+                    directory.path, directory.files
+                ));
+            }
+        }
+        if !self.codebase_map.entrypoints.is_empty() {
+            out.push_str("Likely entrypoints:\n");
+            for entrypoint in &self.codebase_map.entrypoints {
+                out.push_str(&format!("- {}\n", entrypoint.path));
+            }
+        }
+        if !self.codebase_map.test_surfaces.is_empty() {
+            out.push_str("Likely test surfaces:\n");
+            for surface in &self.codebase_map.test_surfaces {
+                out.push_str(&format!("- {}\n", surface.path));
             }
         }
         if !self.manifests.is_empty() {
@@ -152,6 +194,33 @@ pub struct RepoIntelLanguage {
     pub files: usize,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoIntelCodebaseMap {
+    pub roots: Vec<RepoIntelProjectRoot>,
+    pub top_directories: Vec<RepoIntelDirectoryCluster>,
+    pub entrypoints: Vec<RepoIntelPathSignal>,
+    pub test_surfaces: Vec<RepoIntelPathSignal>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoIntelProjectRoot {
+    pub path: String,
+    pub manifest: String,
+    pub manifest_kind: Option<String>,
+    pub languages: Vec<RepoIntelLanguage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoIntelDirectoryCluster {
+    pub path: String,
+    pub files: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoIntelPathSignal {
+    pub path: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoIntelFile {
     pub path: String,
@@ -215,6 +284,7 @@ pub fn collect_repo_intel(request: &RepoIntelRequest) -> anyhow::Result<RepoInte
     let docs = collect_high_signal_files(&root, &files, false, &request.budget);
     let project_kinds = project_kinds(&files, &manifests);
     let languages = language_counts(&files);
+    let codebase_map = codebase_map(&files, &manifests);
     let commands = infer_commands(&root, &manifests);
     let git = collect_git(&root);
     if files_seen >= request.budget.max_files {
@@ -230,6 +300,7 @@ pub fn collect_repo_intel(request: &RepoIntelRequest) -> anyhow::Result<RepoInte
         git,
         project_kinds,
         languages,
+        codebase_map,
         manifests,
         docs,
         commands,
@@ -478,6 +549,157 @@ fn language_counts(files: &[PathBuf]) -> Vec<RepoIntelLanguage> {
     languages
 }
 
+fn codebase_map(files: &[PathBuf], manifests: &[RepoIntelFile]) -> RepoIntelCodebaseMap {
+    RepoIntelCodebaseMap {
+        roots: project_roots(files, manifests),
+        top_directories: top_directory_clusters(files),
+        entrypoints: path_signals(files, is_likely_entrypoint, 12),
+        test_surfaces: path_signals(files, is_likely_test_surface, 12),
+    }
+}
+
+fn project_roots(files: &[PathBuf], manifests: &[RepoIntelFile]) -> Vec<RepoIntelProjectRoot> {
+    manifests
+        .iter()
+        .take(16)
+        .map(|manifest| {
+            let manifest_path = PathBuf::from(&manifest.path);
+            let root_path = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+            let root_display = normalize_root_path(root_path);
+            RepoIntelProjectRoot {
+                path: root_display,
+                manifest: manifest.path.clone(),
+                manifest_kind: manifest_kind(&manifest_path).map(str::to_string),
+                languages: language_counts_for_root(files, root_path),
+            }
+        })
+        .collect()
+}
+
+fn language_counts_for_root(files: &[PathBuf], root: &Path) -> Vec<RepoIntelLanguage> {
+    let mut scoped = files
+        .iter()
+        .filter(|file| root.as_os_str().is_empty() || file.starts_with(root))
+        .cloned()
+        .collect::<Vec<_>>();
+    if root.as_os_str().is_empty() {
+        let first_level_manifest_dirs = files
+            .iter()
+            .filter_map(|file| {
+                is_manifest(file)
+                    .then(|| file.parent())
+                    .flatten()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+            })
+            .collect::<Vec<_>>();
+        scoped.retain(|file| {
+            !first_level_manifest_dirs
+                .iter()
+                .any(|manifest_dir| file.starts_with(manifest_dir))
+        });
+    }
+    language_counts(&scoped).into_iter().take(5).collect()
+}
+
+fn top_directory_clusters(files: &[PathBuf]) -> Vec<RepoIntelDirectoryCluster> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for file in files {
+        let path = file
+            .components()
+            .next()
+            .map(|component| component.as_os_str().to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string());
+        *counts.entry(path).or_default() += 1;
+    }
+    let mut directories = counts
+        .into_iter()
+        .map(|(path, files)| RepoIntelDirectoryCluster { path, files })
+        .collect::<Vec<_>>();
+    directories.sort_by(|a, b| b.files.cmp(&a.files).then_with(|| a.path.cmp(&b.path)));
+    directories.truncate(10);
+    directories
+}
+
+fn path_signals(
+    files: &[PathBuf],
+    predicate: fn(&Path) -> bool,
+    limit: usize,
+) -> Vec<RepoIntelPathSignal> {
+    files
+        .iter()
+        .filter(|path| predicate(path))
+        .take(limit)
+        .map(|path| RepoIntelPathSignal {
+            path: normalize_path(path),
+        })
+        .collect()
+}
+
+fn is_likely_entrypoint(path: &Path) -> bool {
+    let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+    let normalized = normalize_path(path);
+    matches!(
+        file_name,
+        "main.rs"
+            | "lib.rs"
+            | "mod.rs"
+            | "main.ts"
+            | "main.tsx"
+            | "index.ts"
+            | "index.tsx"
+            | "index.js"
+            | "app.py"
+            | "main.py"
+            | "Program.cs"
+            | "Startup.cs"
+            | "main.go"
+    ) || normalized.ends_with("/src/main.rs")
+        || normalized.ends_with("/src/lib.rs")
+        || normalized.ends_with("/src/main.ts")
+        || normalized.ends_with("/src/index.ts")
+}
+
+fn is_likely_test_surface(path: &Path) -> bool {
+    let normalized = normalize_path(path);
+    let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+    normalized.contains("/tests/")
+        || normalized.starts_with("tests/")
+        || normalized.contains("/__tests__/")
+        || file_name.ends_with("_test.rs")
+        || file_name.ends_with("_tests.rs")
+        || file_name.ends_with(".test.ts")
+        || file_name.ends_with(".spec.ts")
+        || file_name.ends_with(".test.tsx")
+        || file_name.ends_with(".spec.tsx")
+}
+
+fn manifest_kind(path: &Path) -> Option<&'static str> {
+    let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+    match name {
+        "Cargo.toml" => Some("Rust/Cargo"),
+        "package.json" | "pnpm-workspace.yaml" => Some("Node/JavaScript"),
+        "go.mod" => Some("Go"),
+        "pyproject.toml" => Some("Python"),
+        "pom.xml" | "build.gradle" | "settings.gradle" => Some("JVM"),
+        "composer.json" => Some("PHP"),
+        _ if path.extension() == Some(OsStr::new("sln"))
+            || path.extension() == Some(OsStr::new("csproj")) =>
+        {
+            Some(".NET")
+        }
+        _ => None,
+    }
+}
+
+fn normalize_root_path(path: &Path) -> String {
+    if path.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        normalize_path(path)
+    }
+}
+
 fn language_for_extension(ext: &str) -> Option<&'static str> {
     match ext.to_ascii_lowercase().as_str() {
         "rs" => Some("Rust"),
@@ -611,5 +833,92 @@ mod tests {
                 .iter()
                 .any(|language| language.name == "TypeScript")
         );
+    }
+
+    #[test]
+    fn codebase_map_finds_roots_clusters_entrypoints_and_tests() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("crates/app/src")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("crates/app/tests")).unwrap();
+        std::fs::write(
+            tmp.path().join("crates/app/Cargo.toml"),
+            "[package]\nname = \"app\"\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("crates/app/src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(
+            tmp.path().join("crates/app/tests/smoke.rs"),
+            "#[test] fn smoke() {}\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("web/src")).unwrap();
+        std::fs::write(
+            tmp.path().join("web/package.json"),
+            r#"{"scripts":{"test":"vitest"}}"#,
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("web/src/index.ts"), "export {}\n").unwrap();
+        std::fs::write(
+            tmp.path().join("web/src/app.test.ts"),
+            "test('app', () => {})\n",
+        )
+        .unwrap();
+
+        let snapshot = collect_repo_intel(&RepoIntelRequest {
+            cwd: tmp.path().to_path_buf(),
+            user_prompt: "understand this large codebase".to_string(),
+            budget: RepoIntelBudget::default(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            snapshot
+                .codebase_map
+                .roots
+                .iter()
+                .map(|root| (root.path.as_str(), root.manifest_kind.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                (".", Some("Rust/Cargo")),
+                ("crates/app", Some("Rust/Cargo")),
+                ("web", Some("Node/JavaScript")),
+            ]
+        );
+        assert!(
+            snapshot
+                .codebase_map
+                .top_directories
+                .iter()
+                .any(|directory| directory.path == "crates")
+        );
+        assert_eq!(
+            snapshot
+                .codebase_map
+                .entrypoints
+                .iter()
+                .map(|signal| signal.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["crates/app/src/main.rs", "web/src/index.ts"]
+        );
+        assert_eq!(
+            snapshot
+                .codebase_map
+                .test_surfaces
+                .iter()
+                .map(|signal| signal.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["crates/app/tests/smoke.rs", "web/src/app.test.ts"]
+        );
+
+        let rendered = snapshot.render_for_model();
+        assert!(rendered.contains("Workspace/project roots:"));
+        assert!(rendered.contains("Top directory clusters:"));
+        assert!(rendered.contains("Likely entrypoints:"));
+        assert!(rendered.contains("Likely test surfaces:"));
     }
 }

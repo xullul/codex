@@ -37,6 +37,8 @@ use crate::create_list_mcp_resource_templates_tool;
 use crate::create_list_mcp_resources_tool;
 use crate::create_local_shell_tool;
 use crate::create_read_mcp_resource_tool;
+use crate::create_repo_read_tool;
+use crate::create_repo_search_tool;
 use crate::create_report_agent_job_result_tool;
 use crate::create_request_permissions_tool;
 use crate::create_request_user_input_tool;
@@ -258,6 +260,21 @@ pub fn build_tool_registry_plan(
             config.code_mode_enabled,
         );
         plan.register_handler("request_permissions", ToolHandlerKind::RequestPermissions);
+    }
+
+    if config.has_environment && config.repo_explore_tools {
+        plan.push_spec(
+            create_repo_search_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler("repo_search", ToolHandlerKind::RepoSearch);
+        plan.push_spec(
+            create_repo_read_tool(),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler("repo_read", ToolHandlerKind::RepoRead);
     }
 
     let deferred_dynamic_tools = params

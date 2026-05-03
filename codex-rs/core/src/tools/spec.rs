@@ -85,6 +85,8 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
     use crate::tools::handlers::PlanHandler;
+    use crate::tools::handlers::RepoReadHandler;
+    use crate::tools::handlers::RepoSearchHandler;
     use crate::tools::handlers::RequestPermissionsHandler;
     use crate::tools::handlers::RequestUserInputHandler;
     use crate::tools::handlers::ShellCommandHandler;
@@ -168,6 +170,8 @@ pub(crate) fn build_specs_with_discoverable_tools(
     let request_user_input_handler = Arc::new(RequestUserInputHandler {
         available_modes: config.request_user_input_available_modes.clone(),
     });
+    let repo_search_handler = Arc::new(RepoSearchHandler);
+    let repo_read_handler = Arc::new(RepoReadHandler);
     let deferred_dynamic_tools = dynamic_tools
         .iter()
         .filter(|tool| tool.defer_loading && (config.namespace_tools || tool.namespace.is_none()))
@@ -243,6 +247,12 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::RequestUserInput => {
                 builder.register_handler(handler.name, request_user_input_handler.clone());
+            }
+            ToolHandlerKind::RepoRead => {
+                builder.register_handler(handler.name, repo_read_handler.clone());
+            }
+            ToolHandlerKind::RepoSearch => {
+                builder.register_handler(handler.name, repo_search_handler.clone());
             }
             ToolHandlerKind::ResumeAgentV1 => {
                 builder.register_handler(handler.name, Arc::new(ResumeAgentHandler));

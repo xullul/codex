@@ -92,13 +92,13 @@ impl OrchestrationMode {
     pub fn usage_guidance(self) -> Option<&'static str> {
         match self {
             Self::Full => Some(
-                "### Orchestration mode\n- Act as an orchestrator for complex, multi-file tasks: make a brief plan, keep immediate blocking work local, and delegate separable exploration, implementation, and verification to explorer and worker agents.\n- Prefer parallel explorer agents for broad discovery and worker agents for disjoint implementation or verification scopes.\n- Integrate subagent results before finalizing.",
+                "### Orchestration mode\n- Act as an orchestrator for complex, multi-file tasks: make a brief plan, keep immediate blocking work local, and delegate separable exploration, implementation, and verification to explorer and worker agents.\n- Use the `<repo_intel>` codebase map to split parallel read-only exploration by subsystem, likely entrypoint, and test surface; ask explorers for path and line evidence.\n- Prefer parallel explorer agents for broad discovery and worker agents for disjoint implementation or verification scopes.\n- Integrate subagent findings before editing or finalizing.",
             ),
             Self::Auto => Some(
-                "### Orchestration mode\n- Default to an explore-first workflow: prefer explorer agents for broad repository, library, pattern, or blocker discovery that spans multiple files or separable areas.\n- Keep narrow, immediately blocking, or edit-path investigation local, especially when you need to read a file you are about to modify.\n- Ask explorers for concise findings, relevant paths, and risks, then synthesize their results before editing.",
+                "### Orchestration mode\n- Default to an explore-first workflow: prefer explorer agents for broad repository, library, pattern, or blocker discovery that spans multiple files or separable areas.\n- Use the `<repo_intel>` codebase map to target exploration around likely subsystems, entrypoints, and test surfaces before broad file reads.\n- Keep narrow, immediately blocking, or edit-path investigation local, especially when you need to read a file you are about to modify.\n- Ask explorers for concise findings, relevant paths and line evidence, and risks, then synthesize their results before editing.",
             ),
             Self::Work => Some(
-                "### Orchestration mode\n- Use explorer agents for separable discovery and worker agents for implementation tasks that can be split into disjoint files, modules, or responsibilities.\n- Give each worker explicit ownership and tell it to preserve other agents' edits.\n- Keep tightly coupled, cross-cutting, or immediately blocking changes local.",
+                "### Orchestration mode\n- Use explorer agents for separable discovery and worker agents for implementation tasks that can be split into disjoint files, modules, or responsibilities.\n- When available, use the `<repo_intel>` codebase map to choose split points by subsystem, entrypoint, and test surface.\n- Give each worker explicit ownership and tell it to preserve other agents' edits.\n- Keep tightly coupled, cross-cutting, or immediately blocking changes local.",
             ),
             Self::Disable => None,
         }
@@ -138,10 +138,10 @@ impl ExplorationSubagentsPolicy {
     pub fn usage_guidance(self) -> &'static str {
         match self {
             Self::Prefer => {
-                "### Exploration subagents\n- Default to `explorer` subagents for read-only repository discovery that can be separated from the immediate edit path, especially when exploring multiple areas or a large unfamiliar codebase.\n- Keep the main context small: ask explorers for concise findings, relevant file paths, and risks instead of copying broad file contents into the parent thread.\n- Keep urgent blocking exploration local only when waiting for a subagent would stop immediate progress."
+                "### Exploration subagents\n- Default to `explorer` subagents for read-only repository discovery that can be separated from the immediate edit path, especially when exploring multiple areas or a large unfamiliar codebase.\n- Use the `<repo_intel>` codebase map to target explorers by subsystem, likely entrypoint, and test surface.\n- Keep the main context small: ask explorers for concise findings, relevant file paths, line evidence, and risks instead of copying broad file contents into the parent thread.\n- Keep urgent blocking exploration local only when waiting for a subagent would stop immediate progress."
             }
             Self::Auto => {
-                "### Exploration subagents\n- Use `explorer` subagents proactively for large or multi-topic repository discovery, even when the user did not explicitly ask for delegation.\n- Delegate read-only side investigations that would otherwise require opening many files in the parent thread.\n- Keep small, targeted, or immediately blocking exploration local."
+                "### Exploration subagents\n- Use `explorer` subagents proactively for large or multi-topic repository discovery, even when the user did not explicitly ask for delegation.\n- Use the `<repo_intel>` codebase map to choose read-only side investigations by subsystem, likely entrypoint, and test surface.\n- Delegate read-only side investigations that would otherwise require opening many files in the parent thread.\n- Ask explorers for path and line evidence, then synthesize results before edits.\n- Keep small, targeted, or immediately blocking exploration local."
             }
             Self::Less => {
                 "### Exploration subagents\n- Only use `explorer` subagents when the user explicitly asks for agents, delegation, or parallel work."
@@ -212,6 +212,7 @@ pub struct ToolsConfig {
     pub search_tool: bool,
     pub namespace_tools: bool,
     pub tool_suggest: bool,
+    pub repo_explore_tools: bool,
     pub exec_permission_approvals_enabled: bool,
     pub request_permissions_tool_enabled: bool,
     pub code_mode_enabled: bool,
@@ -268,6 +269,7 @@ impl ToolsConfig {
         let include_tool_suggest = features.enabled(Feature::ToolSuggest)
             && features.enabled(Feature::Apps)
             && features.enabled(Feature::Plugins);
+        let include_repo_explore_tools = features.enabled(Feature::RepoExploreTools);
         let include_original_image_detail = can_request_original_image_detail(model_info);
         // API-key auth bypasses Codex backend entitlement/tool normalization, so
         // callers must confirm ChatGPT auth before exposing the built-in tool.
@@ -331,6 +333,7 @@ impl ToolsConfig {
             search_tool: include_search_tool,
             namespace_tools: true,
             tool_suggest: include_tool_suggest,
+            repo_explore_tools: include_repo_explore_tools,
             exec_permission_approvals_enabled,
             request_permissions_tool_enabled,
             code_mode_enabled: include_code_mode,

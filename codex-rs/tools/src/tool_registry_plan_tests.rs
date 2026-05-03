@@ -142,6 +142,12 @@ fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         let spec = create_request_permissions_tool(request_permissions_tool_description());
         expected.insert(spec.name().to_string(), spec);
     }
+    if config.has_environment && config.repo_explore_tools {
+        let spec = create_repo_search_tool();
+        expected.insert(spec.name().to_string(), spec);
+        let spec = create_repo_read_tool();
+        expected.insert(spec.name().to_string(), spec);
+    }
 
     assert_eq!(
         actual.keys().collect::<Vec<_>>(),
@@ -519,7 +525,65 @@ fn disabled_environment_omits_environment_backed_tools() {
     assert_lacks_tool_name(&tools, "write_stdin");
     assert_lacks_tool_name(&tools, "apply_patch");
     assert_lacks_tool_name(&tools, "list_dir");
+    assert_lacks_tool_name(&tools, "repo_search");
+    assert_lacks_tool_name(&tools, "repo_read");
     assert_lacks_tool_name(&tools, VIEW_IMAGE_TOOL_NAME);
+}
+
+#[test]
+fn repo_explore_tools_follow_feature_gate() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    assert_contains_tool_names(&tools, &["repo_search", "repo_read"]);
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("repo_search"),
+        kind: ToolHandlerKind::RepoSearch,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::plain("repo_read"),
+        kind: ToolHandlerKind::RepoRead,
+    }));
+
+    features.disable(Feature::RepoExploreTools);
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+    assert_lacks_tool_name(&tools, "repo_search");
+    assert_lacks_tool_name(&tools, "repo_read");
+    assert!(!handlers.iter().any(|handler| matches!(
+        handler.kind,
+        ToolHandlerKind::RepoSearch | ToolHandlerKind::RepoRead
+    )));
 }
 
 #[test]

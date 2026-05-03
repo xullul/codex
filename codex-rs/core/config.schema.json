@@ -499,6 +499,9 @@
             "remote_plugin": {
               "type": "boolean"
             },
+            "repo_explore_tools": {
+              "type": "boolean"
+            },
             "request_permissions": {
               "type": "boolean"
             },
@@ -3579,6 +3582,9 @@
           "type": "boolean"
         },
         "remote_plugin": {
+          "type": "boolean"
+        },
+        "repo_explore_tools": {
           "type": "boolean"
         },
         "request_permissions": {

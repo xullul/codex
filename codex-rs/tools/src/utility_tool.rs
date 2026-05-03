@@ -39,6 +39,101 @@ pub fn create_list_dir_tool() -> ToolSpec {
     })
 }
 
+pub fn create_repo_search_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "query".to_string(),
+            JsonSchema::string(Some(
+                "Pattern to search for. Treated as a ripgrep regex.".to_string(),
+            )),
+        ),
+        (
+            "path".to_string(),
+            JsonSchema::string(Some(
+                "Optional file or directory path to search, relative to the turn cwd or absolute."
+                    .to_string(),
+            )),
+        ),
+        (
+            "glob".to_string(),
+            JsonSchema::string(Some(
+                "Optional ripgrep glob such as `*.rs` or `src/**/*.ts`.".to_string(),
+            )),
+        ),
+        (
+            "context_lines".to_string(),
+            JsonSchema::number(Some(
+                "Optional number of context lines before and after each match.".to_string(),
+            )),
+        ),
+        (
+            "limit".to_string(),
+            JsonSchema::number(Some(
+                "Maximum number of matching lines to return.".to_string(),
+            )),
+        ),
+        (
+            "offset".to_string(),
+            JsonSchema::number(Some(
+                "Number of matching lines to skip before returning results.".to_string(),
+            )),
+        ),
+        (
+            "files_only".to_string(),
+            JsonSchema::boolean(Some(
+                "When true, return only matching file paths.".to_string(),
+            )),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "repo_search".to_string(),
+        description:
+            "Searches repository files with ripgrep-style matching. Read-only, line-numbered, bounded, and policy-aware."
+                .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["query".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: None,
+    })
+}
+
+pub fn create_repo_read_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "path".to_string(),
+            JsonSchema::string(Some(
+                "File path to read, relative to the turn cwd or absolute.".to_string(),
+            )),
+        ),
+        (
+            "offset".to_string(),
+            JsonSchema::number(Some(
+                "1-indexed line number to start reading from.".to_string(),
+            )),
+        ),
+        (
+            "limit".to_string(),
+            JsonSchema::number(Some("Maximum number of lines to return.".to_string())),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "repo_read".to_string(),
+        description:
+            "Reads a bounded range of a text file with line numbers after filesystem deny-read checks."
+                .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(properties, Some(vec!["path".to_string()]), Some(false.into())),
+        output_schema: None,
+    })
+}
+
 pub fn create_test_sync_tool() -> ToolSpec {
     let barrier_properties = BTreeMap::from([
         (

@@ -188,6 +188,37 @@ fn subagents_keep_request_user_input_config_and_agent_jobs_workers_opt_in_by_lab
 }
 
 #[test]
+fn repo_explore_tools_follow_feature_flag() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    let available_models = Vec::new();
+    let enabled_tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    assert!(enabled_tools_config.repo_explore_tools);
+
+    features.disable(Feature::RepoExploreTools);
+    let disabled_tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    assert!(!disabled_tools_config.repo_explore_tools);
+}
+
+#[test]
 fn image_generation_requires_feature_and_supported_model() {
     let supported_model_info = model_info();
     let mut unsupported_model_info = supported_model_info.clone();

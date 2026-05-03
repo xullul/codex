@@ -48,6 +48,37 @@ fn list_dir_tool_matches_expected_spec() {
 }
 
 #[test]
+fn repo_search_tool_matches_expected_spec() {
+    let ToolSpec::Function(tool) = create_repo_search_tool() else {
+        panic!("repo_search should be a function tool");
+    };
+
+    assert_eq!(tool.name, "repo_search");
+    assert!(tool.description.contains("Searches repository files"));
+    let properties = tool.parameters.properties.expect("repo_search properties");
+    assert!(properties.contains_key("query"));
+    assert!(properties.contains_key("glob"));
+    assert!(properties.contains_key("context_lines"));
+    assert!(properties.contains_key("files_only"));
+}
+
+#[test]
+fn repo_read_tool_matches_expected_spec() {
+    let ToolSpec::Function(tool) = create_repo_read_tool() else {
+        panic!("repo_read should be a function tool");
+    };
+
+    assert_eq!(tool.name, "repo_read");
+    assert!(tool.description.contains("Reads a bounded range"));
+    let properties = tool.parameters.properties.expect("repo_read properties");
+    let required = tool.parameters.required;
+    assert_eq!(required, Some(vec!["path".to_string()]));
+    assert!(properties.contains_key("path"));
+    assert!(properties.contains_key("offset"));
+    assert!(properties.contains_key("limit"));
+}
+
+#[test]
 fn test_sync_tool_matches_expected_spec() {
     assert_eq!(
         create_test_sync_tool(),
