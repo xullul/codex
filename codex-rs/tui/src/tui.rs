@@ -465,6 +465,12 @@ impl Tui {
             return false;
         }
 
+        self.notify_now(message)
+    }
+
+    /// Emit a desktop notification immediately, ignoring focus-based gating.
+    /// Returns true if a notification was posted.
+    pub fn notify_now(&mut self, message: impl AsRef<str>) -> bool {
         let Some(backend) = self.notification_backend.as_mut() else {
             return false;
         };

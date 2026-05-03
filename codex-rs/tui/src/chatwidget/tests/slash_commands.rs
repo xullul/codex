@@ -1339,8 +1339,11 @@ async fn slash_copy_state_tracks_plan_item_completion() {
 
     assert_eq!(chat.last_agent_markdown_text(), Some(plan_text.as_str()));
     assert_matches!(
-        chat.pending_notification,
-        Some(Notification::AgentTurnComplete { ref response }) if response == &plan_text
+        chat.delayed_completion_notification,
+        Some(DelayedCompletionNotification {
+            notification: Notification::AgentTurnComplete { ref response },
+            ..
+        }) if response == &plan_text
     );
 }
 
@@ -1558,8 +1561,11 @@ async fn slash_copy_uses_agent_message_item_when_turn_complete_omits_final_text(
         Some("Legacy item final message")
     );
     assert_matches!(
-        chat.pending_notification,
-        Some(Notification::AgentTurnComplete { ref response }) if response == "Legacy item final message"
+        chat.delayed_completion_notification,
+        Some(DelayedCompletionNotification {
+            notification: Notification::AgentTurnComplete { ref response },
+            ..
+        }) if response == "Legacy item final message"
     );
 }
 
@@ -1571,7 +1577,7 @@ async fn agent_turn_complete_notification_does_not_reuse_stale_copy_source() {
         id: "turn-1".into(),
         msg: EventMsg::TurnComplete(turn_complete_event("turn-1", Some("Previous reply"))),
     });
-    chat.pending_notification = None;
+    chat.delayed_completion_notification = None;
 
     chat.handle_codex_event(Event {
         id: "turn-2".into(),
@@ -1581,8 +1587,11 @@ async fn agent_turn_complete_notification_does_not_reuse_stale_copy_source() {
     });
 
     assert_matches!(
-        chat.pending_notification,
-        Some(Notification::AgentTurnComplete { ref response }) if response.is_empty()
+        chat.delayed_completion_notification,
+        Some(DelayedCompletionNotification {
+            notification: Notification::AgentTurnComplete { ref response },
+            ..
+        }) if response.is_empty()
     );
 }
 
@@ -1664,8 +1673,11 @@ async fn queued_menu_slash_keeps_agent_turn_complete_notification() {
     });
 
     assert_matches!(
-        chat.pending_notification,
-        Some(Notification::AgentTurnComplete { ref response }) if response == "Done"
+        chat.delayed_completion_notification,
+        Some(DelayedCompletionNotification {
+            notification: Notification::AgentTurnComplete { ref response },
+            ..
+        }) if response == "Done"
     );
     assert!(render_bottom_popup(&chat, /*width*/ 80).contains("Select Model"));
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));

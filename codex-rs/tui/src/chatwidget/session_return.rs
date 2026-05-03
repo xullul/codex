@@ -12,10 +12,12 @@ impl ChatWidget {
         self.handle_terminal_focus_changed_at(focused, Instant::now());
     }
 
-    fn handle_terminal_focus_changed_at(&mut self, focused: bool, now: Instant) {
+    pub(super) fn handle_terminal_focus_changed_at(&mut self, focused: bool, now: Instant) {
+        self.cancel_delayed_completion_notification();
         if !focused {
             if self.terminal_unfocused_since.is_none() {
                 self.terminal_unfocused_since = Some(now);
+                self.away_snapshot = Some(self.current_away_snapshot());
             }
             return;
         }
@@ -33,7 +35,12 @@ impl ChatWidget {
     }
 
     fn maybe_add_away_return_summary(&mut self, unfocused_for: Duration) {
-        let Some((key, detail)) = self.away_return_summary() else {
+        let before = self.away_snapshot.take();
+        let summary = match before.as_ref() {
+            Some(before) => self.away_return_delta_summary(before),
+            None => self.away_return_summary(),
+        };
+        let Some((key, detail)) = summary else {
             return;
         };
         if self.last_away_summary_key.as_deref() == Some(key.as_str()) {
@@ -53,45 +60,40 @@ impl ChatWidget {
     }
 
     fn away_return_summary(&self) -> Option<(String, String)> {
-        let pending_approval = self.bottom_pane.pending_approval_summary();
-        let active_step = self
-            .latest_work_state_checklist
-            .iter()
-            .find(|item| matches!(item.status, WorkStateStepStatus::InProgress))
-            .map(|item| item.step.as_str());
-        let latest_progress = self.latest_work_state_progress.last();
+        let snapshot = self.current_away_snapshot();
 
-        let has_retained_work = latest_progress.is_some()
-            || !self.latest_work_state_subagents.is_empty()
-            || active_step.is_some()
-            || pending_approval.is_some()
-            || self.bottom_pane.background_terminal_summary().is_some();
+        let has_retained_work = snapshot.latest_progress.is_some()
+            || !snapshot.subagents.is_empty()
+            || snapshot.active_step.is_some()
+            || snapshot.pending_approval.is_some()
+            || snapshot.background_summary.is_some();
         if !has_retained_work {
             return None;
         }
 
         let key = format!(
-            "{}:{}:{}:{}:{}",
-            self.latest_work_state_progress.len(),
-            self.latest_work_state_subagents.len(),
+            "retained:{}:{}:{}:{}:{}:{}",
+            snapshot.progress_count,
+            snapshot.subagents.len(),
             self.latest_work_state_checklist.len(),
-            pending_approval.as_deref().unwrap_or_default(),
-            active_step.unwrap_or_default()
+            snapshot.pending_approval.as_deref().unwrap_or_default(),
+            snapshot.active_step.as_deref().unwrap_or_default(),
+            snapshot.background_summary.as_deref().unwrap_or_default()
         );
 
         let mut parts = Vec::new();
-        if let Some(approval) = pending_approval {
+        if let Some(approval) = snapshot.pending_approval {
             parts.push(format!("needs attention: {approval}"));
         }
-        if let Some(row) = latest_progress {
+        if let Some(row) = snapshot.latest_progress {
             parts.push(format!("latest work: {} ({})", row.label, row.detail));
         }
-        if let Some(step) = active_step {
+        if let Some(step) = snapshot.active_step {
             parts.push(format!("active step: {step}"));
         }
-        if !self.latest_work_state_subagents.is_empty() {
-            let running = self
-                .latest_work_state_subagents
+        if !snapshot.subagents.is_empty() {
+            let running = snapshot
+                .subagents
                 .iter()
                 .filter(|row| row.state.is_active())
                 .count();
@@ -101,11 +103,76 @@ impl ChatWidget {
                 parts.push("subagent work finished while you were away".to_string());
             }
         }
+        if let Some(summary) = snapshot.background_summary {
+            parts.push(format!("background terminal: {summary}"));
+        }
         if parts.is_empty() {
             parts.push(self.current_status.header.clone());
         }
 
         Some((key, parts.join("; ")))
+    }
+
+    fn away_return_delta_summary(&self, before: &AwaySnapshot) -> Option<(String, String)> {
+        let after = self.current_away_snapshot();
+        if before == &after {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        if before.pending_approval != after.pending_approval
+            && let Some(approval) = after.pending_approval.as_ref()
+        {
+            parts.push(format!("needs attention: {approval}"));
+        }
+        if (before.progress_count != after.progress_count
+            || before.latest_progress != after.latest_progress)
+            && let Some(row) = after.latest_progress.as_ref()
+        {
+            parts.push(format!("latest work: {} ({})", row.label, row.detail));
+        }
+        if before.active_step != after.active_step
+            && let Some(step) = after.active_step.as_ref()
+        {
+            parts.push(format!("active step: {step}"));
+        }
+        if before.subagents != after.subagents && !after.subagents.is_empty() {
+            let running = after
+                .subagents
+                .iter()
+                .filter(|row| row.state.is_active())
+                .count();
+            if running > 0 {
+                parts.push(format!("{running} subagent(s) still active"));
+            } else {
+                parts.push("subagent work finished while you were away".to_string());
+            }
+        }
+        if before.background_summary != after.background_summary
+            && let Some(summary) = after.background_summary.as_ref()
+        {
+            parts.push(format!("background terminal: {summary}"));
+        }
+        if parts.is_empty() {
+            return None;
+        }
+
+        Some((format!("delta:{before:?}:{after:?}"), parts.join("; ")))
+    }
+
+    fn current_away_snapshot(&self) -> AwaySnapshot {
+        AwaySnapshot {
+            progress_count: self.latest_work_state_progress.len(),
+            latest_progress: self.latest_work_state_progress.last().cloned(),
+            active_step: self
+                .latest_work_state_checklist
+                .iter()
+                .find(|item| matches!(item.status, WorkStateStepStatus::InProgress))
+                .map(|item| item.step.clone()),
+            pending_approval: self.bottom_pane.pending_approval_summary(),
+            subagents: self.latest_work_state_subagents.clone(),
+            background_summary: self.bottom_pane.background_terminal_summary(),
+        }
     }
 
     fn maybe_show_idle_context_nudge(&mut self, unfocused_for: Duration) {

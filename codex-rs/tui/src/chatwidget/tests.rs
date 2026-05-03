@@ -104,6 +104,7 @@ pub(super) use codex_config::ConfigRequirements;
 pub(super) use codex_config::ConfigRequirementsToml;
 pub(super) use codex_config::RequirementSource;
 pub(super) use codex_config::types::ApprovalsReviewer;
+pub(super) use codex_config::types::NotificationCondition;
 pub(super) use codex_config::types::Notifications;
 #[cfg(target_os = "windows")]
 pub(super) use codex_config::types::WindowsSandboxModeToml;
@@ -279,6 +280,7 @@ mod permissions;
 mod plan_mode;
 mod popups_and_settings;
 mod review_mode;
+mod session_return;
 mod side;
 mod slash_commands;
 mod status_and_layout;

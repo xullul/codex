@@ -117,6 +117,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::types::ApprovalsReviewer;
+use codex_config::types::NotificationCondition;
 use codex_config::types::Notifications;
 use codex_config::types::WindowsSandboxModeToml;
 use codex_core_skills::model::SkillMetadata;
@@ -1114,6 +1115,7 @@ pub(crate) struct ChatWidget {
     queued_message_edit_hint_binding: Option<KeyBinding>,
     // Pending notification to show when unfocused on next Draw
     pending_notification: Option<Notification>,
+    delayed_completion_notification: Option<DelayedCompletionNotification>,
     /// When `Some`, the user has pressed a quit shortcut and the second press
     /// must occur before `quit_shortcut_expires_at`.
     quit_shortcut_expires_at: Option<Instant>,
@@ -1195,6 +1197,7 @@ pub(crate) struct ChatWidget {
     current_goal_status: Option<GoalStatusState>,
     goal_status_active_turn_started_at: Option<Instant>,
     terminal_unfocused_since: Option<Instant>,
+    away_snapshot: Option<AwaySnapshot>,
     last_away_summary_key: Option<String>,
     last_idle_context_nudge_key: Option<String>,
     instruction_size_warning_emitted: bool,
@@ -1214,6 +1217,22 @@ pub(crate) struct ChatWidget {
 struct CollabAgentMetadata {
     agent_nickname: Option<String>,
     agent_role: Option<String>,
+}
+
+#[derive(Debug)]
+struct DelayedCompletionNotification {
+    notification: Notification,
+    deadline: Instant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AwaySnapshot {
+    progress_count: usize,
+    latest_progress: Option<WorkProgressRow>,
+    active_step: Option<String>,
+    pending_approval: Option<String>,
+    subagents: Vec<SubagentActivityRow>,
+    background_summary: Option<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -6094,6 +6113,7 @@ impl ChatWidget {
             suppress_session_configured_redraw: false,
             suppress_initial_user_message_submit: false,
             pending_notification: None,
+            delayed_completion_notification: None,
             quit_shortcut_expires_at: None,
             quit_shortcut_key: None,
             is_review_mode: false,
@@ -6128,6 +6148,7 @@ impl ChatWidget {
             current_goal_status: None,
             goal_status_active_turn_started_at: None,
             terminal_unfocused_since: None,
+            away_snapshot: None,
             last_away_summary_key: None,
             last_idle_context_nudge_key: None,
             instruction_size_warning_emitted: false,
@@ -6179,6 +6200,9 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            self.cancel_delayed_completion_notification();
+        }
         if self.bottom_pane.has_active_view()
             && !matches!(
                 key_event,
@@ -6563,6 +6587,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_paste(&mut self, text: String) {
+        self.cancel_delayed_completion_notification();
         self.bottom_pane.handle_paste(text);
         self.refresh_plan_mode_nudge();
     }
@@ -8142,6 +8167,7 @@ impl ChatWidget {
             }
             EventMsg::AgentReasoningSectionBreak(_) => self.on_reasoning_section_break(),
             EventMsg::TurnStarted(event) => {
+                self.cancel_delayed_completion_notification();
                 let turn_id = event.turn_id;
                 let model_context_window = event.model_context_window;
                 self.last_turn_id = Some(turn_id);
@@ -8526,6 +8552,10 @@ impl ChatWidget {
         self.frame_requester.schedule_frame();
     }
 
+    fn cancel_delayed_completion_notification(&mut self) {
+        self.delayed_completion_notification = None;
+    }
+
     fn bump_active_cell_revision(&mut self) {
         // Wrapping avoids overflow; wraparound would require 2^64 bumps and at
         // worst causes a one-time cache-key collision.
@@ -8541,13 +8571,46 @@ impl ChatWidget {
         {
             return;
         }
+        if self.should_delay_completion_notification(&notification) {
+            let deadline = Instant::now() + FOCUSED_TURN_COMPLETE_NOTIFICATION_DELAY;
+            self.delayed_completion_notification = Some(DelayedCompletionNotification {
+                notification,
+                deadline,
+            });
+            self.frame_requester
+                .schedule_frame_in(FOCUSED_TURN_COMPLETE_NOTIFICATION_DELAY);
+            return;
+        }
+        if notification.priority() > 0 {
+            self.cancel_delayed_completion_notification();
+        }
         self.pending_notification = Some(notification);
         self.request_redraw();
     }
 
+    fn should_delay_completion_notification(&self, notification: &Notification) -> bool {
+        matches!(notification, Notification::AgentTurnComplete { .. })
+            && self.config.tui_notifications.condition == NotificationCondition::Unfocused
+            && self.terminal_unfocused_since.is_none()
+    }
+
     pub(crate) fn maybe_post_pending_notification(&mut self, tui: &mut crate::tui::Tui) {
+        self.maybe_post_pending_notification_at(tui, Instant::now());
+    }
+
+    fn maybe_post_pending_notification_at(&mut self, tui: &mut crate::tui::Tui, now: Instant) {
         if let Some(notif) = self.pending_notification.take() {
             tui.notify(notif.display());
+        }
+        if self
+            .delayed_completion_notification
+            .as_ref()
+            .is_some_and(|pending| pending.deadline <= now)
+        {
+            let Some(pending) = self.delayed_completion_notification.take() else {
+                return;
+            };
+            tui.notify_now(pending.notification.display());
         }
     }
 
@@ -12942,6 +13005,7 @@ impl Notification {
 }
 
 const AGENT_NOTIFICATION_PREVIEW_GRAPHEMES: usize = 200;
+const FOCUSED_TURN_COMPLETE_NOTIFICATION_DELAY: Duration = Duration::from_secs(6);
 
 const PLACEHOLDERS: [&str; 8] = [
     "Explain this codebase",
