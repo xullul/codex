@@ -8635,10 +8635,16 @@ impl ChatWidget {
             .map(|info| info.last_token_usage.clone())
             .unwrap_or_default();
         let used = usage.tokens_in_context_window();
-        let used_percent = 100 - usage.percent_of_context_window_remaining(context_window);
+        let used_percent =
+            (100 - usage.percent_of_context_window_remaining(context_window)).clamp(0, 100);
+        let pressure = match used_percent {
+            95..=100 => "critical",
+            80..=94 => "high",
+            _ => "normal",
+        };
         Some(format!(
-            "{}% used · {}/{}",
-            used_percent.clamp(0, 100),
+            "{}% used · {}/{} · {pressure}",
+            used_percent,
             format_tokens_compact(used),
             format_tokens_compact(context_window)
         ))

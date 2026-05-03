@@ -84,6 +84,72 @@ pub(crate) struct WorkProgressRow {
     pub(crate) detail: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkActivityKind {
+    Commands,
+    FileEdits,
+    McpTools,
+    WebSearch,
+    ImageGeneration,
+    Hooks,
+    ContextCompaction,
+    RepoIntel,
+}
+
+impl WorkActivityKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Commands => "Commands",
+            Self::FileEdits => "File edits",
+            Self::McpTools => "MCP tools",
+            Self::WebSearch => "Web search",
+            Self::ImageGeneration => "Image generation",
+            Self::Hooks => "Hooks",
+            Self::ContextCompaction => "Context",
+            Self::RepoIntel => "Repo intel",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkActivityRow {
+    kind: WorkActivityKind,
+    count: usize,
+    latest_detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkActivityBucket {
+    kind: WorkActivityKind,
+    count: usize,
+    latest_detail: Option<String>,
+}
+
+impl WorkActivityBucket {
+    fn new(kind: WorkActivityKind) -> Self {
+        Self {
+            kind,
+            count: 0,
+            latest_detail: None,
+        }
+    }
+
+    fn add(&mut self, detail: &str) {
+        self.count = self.count.saturating_add(1);
+        if !detail.trim().is_empty() {
+            self.latest_detail = Some(detail.to_string());
+        }
+    }
+
+    fn into_row(self) -> Option<WorkActivityRow> {
+        (self.count > 0).then_some(WorkActivityRow {
+            kind: self.kind,
+            count: self.count,
+            latest_detail: self.latest_detail,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WorkStateSnapshot {
     pub(crate) active_phase: Option<String>,
@@ -248,6 +314,20 @@ impl WorkStateView {
             push_section_with_summary(&mut lines, "Task progress", &progress_summary);
             for item in &self.snapshot.checklist {
                 lines.extend(wrap_checklist_item(item, width));
+            }
+        }
+
+        let activity_rows = work_activity_rows(&self.snapshot.progress);
+        if !activity_rows.is_empty() {
+            has_content = true;
+            push_gap(&mut lines);
+            push_section_with_summary(
+                &mut lines,
+                "Activity",
+                &pluralize(activity_rows.len(), "group", "groups"),
+            );
+            for row in &activity_rows {
+                lines.extend(wrap_activity_row(row, width));
             }
         }
 
@@ -494,6 +574,71 @@ fn tool_count_label(count: usize) -> String {
     pluralize(count, "tool", "tools")
 }
 
+fn work_activity_rows(progress: &[WorkProgressRow]) -> Vec<WorkActivityRow> {
+    let mut buckets = vec![
+        WorkActivityBucket::new(WorkActivityKind::Commands),
+        WorkActivityBucket::new(WorkActivityKind::FileEdits),
+        WorkActivityBucket::new(WorkActivityKind::McpTools),
+        WorkActivityBucket::new(WorkActivityKind::WebSearch),
+        WorkActivityBucket::new(WorkActivityKind::ImageGeneration),
+        WorkActivityBucket::new(WorkActivityKind::Hooks),
+        WorkActivityBucket::new(WorkActivityKind::ContextCompaction),
+        WorkActivityBucket::new(WorkActivityKind::RepoIntel),
+    ];
+
+    for row in progress {
+        let Some(kind) = work_activity_kind(&row.label) else {
+            continue;
+        };
+        if let Some(bucket) = buckets.iter_mut().find(|bucket| bucket.kind == kind) {
+            bucket.add(&row.detail);
+        }
+    }
+
+    buckets
+        .into_iter()
+        .filter_map(WorkActivityBucket::into_row)
+        .collect()
+}
+
+fn work_activity_kind(label: &str) -> Option<WorkActivityKind> {
+    match label {
+        "command started" | "command finished" => Some(WorkActivityKind::Commands),
+        "editing files" | "edited files" => Some(WorkActivityKind::FileEdits),
+        "mcp tool started" | "mcp tool finished" => Some(WorkActivityKind::McpTools),
+        "web search started" | "web search finished" => Some(WorkActivityKind::WebSearch),
+        "image generation started" | "image generated" => Some(WorkActivityKind::ImageGeneration),
+        "hook started" | "hook completed" => Some(WorkActivityKind::Hooks),
+        "context compacted" => Some(WorkActivityKind::ContextCompaction),
+        "repo intel" | "repo intel skipped" | "repo intel failed" => {
+            Some(WorkActivityKind::RepoIntel)
+        }
+        _ => None,
+    }
+}
+
+fn wrap_activity_row(row: &WorkActivityRow, width: u16) -> Vec<Line<'static>> {
+    let detail = row
+        .latest_detail
+        .as_deref()
+        .filter(|detail| !detail.trim().is_empty())
+        .map(|detail| format!(" · latest: {detail}"))
+        .unwrap_or_default();
+    let line = Line::from(vec![
+        "  - ".dim(),
+        row.kind.title().to_string().into(),
+        ": ".dim(),
+        pluralize(row.count, "event", "events").dim(),
+        detail.dim(),
+    ]);
+    adaptive_wrap_lines(
+        std::iter::once(line),
+        RtOptions::new(width as usize)
+            .initial_indent("".into())
+            .subsequent_indent("    ".into()),
+    )
+}
+
 fn wrap_dimmed(text: &str, width: u16, indent: &'static str) -> Vec<Line<'static>> {
     adaptive_wrap_lines(
         std::iter::once(Line::from(text.to_string().dim())),
@@ -651,7 +796,7 @@ mod tests {
             active_phase: Some("Working".to_string()),
             active_tool_summary: Some("reading TUI state surfaces".to_string()),
             pending_approval_summary: Some("1 command approval waiting".to_string()),
-            context_summary: Some("89% used · 242K/272K".to_string()),
+            context_summary: Some("89% used · 242K/272K · high".to_string()),
             active_hook_summary: Some("1 running · PreToolUse hook".to_string()),
             continuity_status: Some(
                 "Checklist, proposed plan, queued input, and subagent rows are retained for resume"
@@ -671,8 +816,36 @@ mod tests {
                     detail: "Rust/Cargo; 420 files, 2 manifests".to_string(),
                 },
                 WorkProgressRow {
-                    label: "command".to_string(),
+                    label: "command started".to_string(),
                     detail: "cargo test -p codex-tui".to_string(),
+                },
+                WorkProgressRow {
+                    label: "command finished".to_string(),
+                    detail: "cargo test -p codex-tui · ExitStatus(0)".to_string(),
+                },
+                WorkProgressRow {
+                    label: "edited files".to_string(),
+                    detail: "2 files changed".to_string(),
+                },
+                WorkProgressRow {
+                    label: "mcp tool finished".to_string(),
+                    detail: "Read Docs · openai".to_string(),
+                },
+                WorkProgressRow {
+                    label: "web search finished".to_string(),
+                    detail: "searched \"Codex TUI\"".to_string(),
+                },
+                WorkProgressRow {
+                    label: "image generated".to_string(),
+                    detail: "C:\\tmp\\art.png".to_string(),
+                },
+                WorkProgressRow {
+                    label: "hook completed".to_string(),
+                    detail: "PostToolUse hook".to_string(),
+                },
+                WorkProgressRow {
+                    label: "context compacted".to_string(),
+                    detail: "history summarized".to_string(),
                 },
             ],
             queued_messages: vec!["Follow up once tests pass".to_string()],
