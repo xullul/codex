@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::status::format_tokens_compact;
+use crate::terminal_progress::TerminalProgressState;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: activity indicator + project name.
@@ -766,6 +767,21 @@ impl ChatWidget {
 
     pub(super) fn should_animate_terminal_title_action_required(&self) -> bool {
         self.config.animations && self.terminal_title_shows_action_required()
+    }
+
+    pub(crate) fn terminal_progress_state(&self) -> TerminalProgressState {
+        if self.terminal_title_requires_action() {
+            return TerminalProgressState::Clear;
+        }
+
+        if self.mcp_startup_status.is_some()
+            || self.is_user_turn_pending_or_running()
+            || self.terminal_title_status_kind == TerminalTitleStatusKind::Undoing
+        {
+            TerminalProgressState::Indeterminate
+        } else {
+            TerminalProgressState::Clear
+        }
     }
 
     fn should_animate_terminal_title_spinner_with_selections(

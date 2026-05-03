@@ -1,6 +1,7 @@
 //! Terminal-title focused tests for live chatwidget status-surface behavior.
 
 use super::*;
+use crate::terminal_progress::TerminalProgressState;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -152,4 +153,60 @@ async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_d
         Some("[ ! ] Action Required | project".to_string())
     );
     assert!(!chat.should_animate_terminal_title_action_required());
+}
+
+#[tokio::test]
+async fn terminal_progress_status_surfaces_bridge_tracks_active_work() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    assert_eq!(chat.terminal_progress_state(), TerminalProgressState::Clear);
+
+    chat.user_turn_pending_start = true;
+    assert_eq!(
+        chat.terminal_progress_state(),
+        TerminalProgressState::Indeterminate
+    );
+
+    chat.user_turn_pending_start = false;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+    assert_eq!(
+        chat.terminal_progress_state(),
+        TerminalProgressState::Indeterminate
+    );
+
+    chat.bottom_pane.set_task_running(/*running*/ false);
+    chat.terminal_title_status_kind = TerminalTitleStatusKind::Undoing;
+    assert_eq!(
+        chat.terminal_progress_state(),
+        TerminalProgressState::Indeterminate
+    );
+
+    chat.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
+    assert_eq!(chat.terminal_progress_state(), TerminalProgressState::Clear);
+}
+
+#[tokio::test]
+async fn terminal_progress_status_surfaces_bridge_clears_when_action_required() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    let request = ExecApprovalRequestEvent {
+        call_id: "call-progress-clear".into(),
+        approval_id: Some("call-progress-clear".into()),
+        turn_id: "turn-progress-clear".into(),
+        command: vec!["bash".into(), "-lc".into(), "echo hello".into()],
+        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        reason: Some("need confirmation".into()),
+        network_approval_context: None,
+        proposed_execpolicy_amendment: None,
+        proposed_network_policy_amendments: None,
+        additional_permissions: None,
+        available_decisions: None,
+        parsed_cmd: vec![],
+    };
+    chat.handle_codex_event(Event {
+        id: "sub-progress-clear".into(),
+        msg: EventMsg::ExecApprovalRequest(request),
+    });
+
+    assert_eq!(chat.terminal_progress_state(), TerminalProgressState::Clear);
 }

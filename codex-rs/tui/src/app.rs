@@ -1179,6 +1179,7 @@ See the Codex keymap documentation for supported actions and examples."
                     }
                     // Allow widgets to process any pending timers before rendering.
                     self.chat_widget.pre_draw_tick();
+                    tui.set_terminal_progress_state(self.chat_widget.terminal_progress_state());
                     let desired_height =
                         self.chat_widget.desired_height(tui.terminal.size()?.width);
                     if terminal_resize_reflow_enabled {
@@ -1212,6 +1213,9 @@ impl Drop for App {
     fn drop(&mut self) {
         if let Err(err) = self.chat_widget.clear_managed_terminal_title() {
             tracing::debug!(error = %err, "failed to clear terminal title on app drop");
+        }
+        if let Err(err) = crate::terminal_progress::clear_terminal_progress_if_supported() {
+            tracing::debug!(error = %err, "failed to clear terminal progress on app drop");
         }
     }
 }

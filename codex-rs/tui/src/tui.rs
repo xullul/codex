@@ -40,6 +40,10 @@ use crate::custom_terminal;
 use crate::custom_terminal::Terminal as CustomTerminal;
 use crate::notifications::DesktopNotificationBackend;
 use crate::notifications::detect_backend;
+use crate::terminal_progress::TerminalProgressState;
+use crate::terminal_progress::emit_terminal_progress;
+use crate::terminal_progress::supports_terminal_progress_for_current_terminal;
+use crate::terminal_progress::terminal_progress_uses_tmux_passthrough;
 use crate::tui::event_stream::EventBroker;
 use crate::tui::event_stream::TuiEventStream;
 #[cfg(unix)]
@@ -330,6 +334,9 @@ pub struct Tui {
     enhanced_keys_supported: bool,
     notification_backend: Option<DesktopNotificationBackend>,
     notification_condition: NotificationCondition,
+    terminal_progress_supported: bool,
+    terminal_progress_dcs_passthrough: bool,
+    last_terminal_progress_state: Option<TerminalProgressState>,
     is_zellij: bool,
     // When false, enter_alt_screen() becomes a no-op (for Zellij scrollback support)
     alt_screen_enabled: bool,
@@ -366,6 +373,9 @@ impl Tui {
             enhanced_keys_supported,
             notification_backend: Some(detect_backend(NotificationMethod::default())),
             notification_condition: NotificationCondition::default(),
+            terminal_progress_supported: supports_terminal_progress_for_current_terminal(),
+            terminal_progress_dcs_passthrough: terminal_progress_uses_tmux_passthrough(),
+            last_terminal_progress_state: None,
             is_zellij,
             alt_screen_enabled: true,
         }
@@ -471,6 +481,20 @@ impl Tui {
                 );
                 self.notification_backend = None;
                 false
+            }
+        }
+    }
+
+    pub(crate) fn set_terminal_progress_state(&mut self, state: TerminalProgressState) {
+        if !self.terminal_progress_supported || self.last_terminal_progress_state == Some(state) {
+            return;
+        }
+
+        match emit_terminal_progress(state, self.terminal_progress_dcs_passthrough) {
+            Ok(()) => self.last_terminal_progress_state = Some(state),
+            Err(err) => {
+                tracing::debug!(error = %err, "failed to set terminal progress");
+                self.terminal_progress_supported = false;
             }
         }
     }
