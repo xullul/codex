@@ -8635,6 +8635,11 @@ impl ChatWidget {
             .as_ref()
             .map(|info| info.last_token_usage.clone())
             .unwrap_or_default();
+        let total_usage = self
+            .token_info
+            .as_ref()
+            .map(|info| info.total_token_usage.clone())
+            .unwrap_or_default();
         let used = usage.tokens_in_context_window();
         let used_percent =
             (100 - usage.percent_of_context_window_remaining(context_window)).clamp(0, 100);
@@ -8643,12 +8648,28 @@ impl ChatWidget {
             80..=94 => "high",
             _ => "normal",
         };
-        Some(format!(
-            "{}% used · {}/{} · {pressure}",
-            used_percent,
-            format_tokens_compact(used),
-            format_tokens_compact(context_window)
-        ))
+        let mut parts = vec![
+            format!("{used_percent}% used"),
+            format!(
+                "{}/{}",
+                format_tokens_compact(used),
+                format_tokens_compact(context_window)
+            ),
+        ];
+        if total_usage.input_tokens > 0 {
+            parts.push(format!(
+                "{} in",
+                format_tokens_compact(total_usage.input_tokens)
+            ));
+        }
+        if total_usage.output_tokens > 0 {
+            parts.push(format!(
+                "{} out",
+                format_tokens_compact(total_usage.output_tokens)
+            ));
+        }
+        parts.push(pressure.to_string());
+        Some(parts.join(" · "))
     }
 
     fn work_state_active_hook_summary(&self) -> Option<String> {

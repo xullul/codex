@@ -296,22 +296,22 @@ impl WorkStateView {
                 .iter()
                 .filter(|item| matches!(item.status, WorkStateStepStatus::Completed))
                 .count();
-            let active = self
+            let mut progress_summary =
+                format!("Plan: {completed}/{} done", self.snapshot.checklist.len());
+            if let Some(item) = self
                 .snapshot
                 .checklist
                 .iter()
-                .position(|item| matches!(item.status, WorkStateStepStatus::InProgress))
-                .map(|idx| idx + 1);
-            let progress_summary = active.map_or_else(
-                || format!("{completed}/{} complete", self.snapshot.checklist.len()),
-                |active| {
-                    format!(
-                        "{completed}/{} complete, step {active} active",
-                        self.snapshot.checklist.len()
-                    )
-                },
+                .find(|item| matches!(item.status, WorkStateStepStatus::InProgress))
+            {
+                progress_summary = format!("{progress_summary} · active: {}", item.step);
+            }
+            push_section_with_summary(
+                &mut lines,
+                "Task progress",
+                &pluralize(self.snapshot.checklist.len(), "step", "steps"),
             );
-            push_section_with_summary(&mut lines, "Task progress", &progress_summary);
+            lines.extend(wrap_dimmed(&progress_summary, width, "  "));
             for item in &self.snapshot.checklist {
                 lines.extend(wrap_checklist_item(item, width));
             }

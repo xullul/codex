@@ -105,6 +105,38 @@ async fn context_indicator_shows_used_tokens_when_window_unknown() {
 }
 
 #[tokio::test]
+async fn work_state_context_summary_includes_input_and_output_totals() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let token_info = TokenUsageInfo {
+        total_token_usage: TokenUsage {
+            input_tokens: 50_000,
+            output_tokens: 12_000,
+            total_tokens: 62_000,
+            ..TokenUsage::default()
+        },
+        last_token_usage: TokenUsage {
+            total_tokens: 62_000,
+            ..TokenUsage::default()
+        },
+        model_context_window: Some(112_000),
+    };
+
+    chat.handle_codex_event(Event {
+        id: "token-usage".into(),
+        msg: EventMsg::TokenCount(TokenCountEvent {
+            info: Some(token_info),
+            rate_limits: None,
+        }),
+    });
+
+    assert_eq!(
+        chat.work_state_context_summary(),
+        Some("50% used · 62K/112K · 50K in · 12K out · normal".to_string())
+    );
+}
+
+#[tokio::test]
 async fn turn_started_uses_runtime_context_window_before_first_token_count() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 

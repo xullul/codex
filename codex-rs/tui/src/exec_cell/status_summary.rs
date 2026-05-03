@@ -153,6 +153,8 @@ fn progress_detail(progress: &ExecProgress) -> Option<String> {
     let mut parts = vec![codex_utils_elapsed::format_duration(progress.elapsed)];
     if progress.output_line_count > 0 {
         parts.push(format!("{} lines", progress.output_line_count));
+    } else if progress.recent_output_lines.is_empty() {
+        parts.push("no output yet".to_string());
     }
     let mut lines = vec![parts.join(" · ")];
     lines.extend(
@@ -316,6 +318,37 @@ mod tests {
                     "cargo test -p codex-tui\n3.00s · 12 lines\n> running 12 tests\n> test status_summary ... ok"
                         .to_string()
                 ),
+            }
+        );
+    }
+
+    #[test]
+    fn includes_quiet_progress_for_running_command_without_output() {
+        let parsed = vec![ParsedCommand::Action {
+            cmd: "cargo test -p codex-tui".to_string(),
+            kind: ParsedCommandActionKind::Test,
+            detail: Some("cargo test -p codex-tui".to_string()),
+        }];
+
+        assert_eq!(
+            exec_status_summary(
+                &[
+                    "bash".to_string(),
+                    "-lc".to_string(),
+                    "cargo test -p codex-tui".to_string()
+                ],
+                &parsed,
+                ExecCommandSource::Agent,
+                None,
+                Some(&ExecProgress {
+                    elapsed: Duration::from_secs(3),
+                    output_line_count: 0,
+                    recent_output_lines: Vec::new(),
+                }),
+            ),
+            ExecStatusSummary {
+                header: "Testing".to_string(),
+                details: Some("cargo test -p codex-tui\n3.00s · no output yet".to_string()),
             }
         );
     }
