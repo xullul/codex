@@ -141,6 +141,7 @@ mod local_chatgpt_auth;
 mod markdown;
 mod markdown_render;
 mod markdown_stream;
+mod markdown_table;
 mod mcp_tool_status;
 mod mention_codec;
 mod model_catalog;

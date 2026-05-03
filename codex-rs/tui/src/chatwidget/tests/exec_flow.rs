@@ -2412,7 +2412,7 @@ async fn apply_patch_events_emit_history_cells() {
         chat.latest_work_state_progress
             .last()
             .map(|row| (row.label.as_str(), row.detail.as_str())),
-        Some(("editing files", "1 file changed"))
+        Some(("editing files", "1 file changed · +1 -0"))
     );
     let blob = lines_to_single_string(cells.last().unwrap());
     assert!(
@@ -2450,7 +2450,7 @@ async fn apply_patch_events_emit_history_cells() {
         chat.latest_work_state_progress
             .last()
             .map(|row| (row.label.as_str(), row.detail.as_str())),
-        Some(("edited files", "1 file changed"))
+        Some(("edited files", "1 file changed · +1 -0"))
     );
 }
 

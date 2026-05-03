@@ -5,12 +5,15 @@
 //! transcripts show the real file target (including normalized location suffixes) and can shorten
 //! absolute paths relative to a known working directory.
 
+use crate::markdown_table::TableState;
+use crate::markdown_table::render_table;
 use crate::render::highlight::highlight_code_to_lines;
 use crate::render::line_utils::line_to_static;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use codex_utils_string::normalize_markdown_hash_location_suffix;
 use dirs::home_dir;
+use pulldown_cmark::Alignment;
 use pulldown_cmark::CodeBlockKind;
 use pulldown_cmark::CowStr;
 use pulldown_cmark::Event;
@@ -20,6 +23,7 @@ use pulldown_cmark::Parser;
 use pulldown_cmark::Tag;
 use pulldown_cmark::TagEnd;
 use ratatui::style::Style;
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
@@ -108,6 +112,7 @@ pub(crate) fn render_markdown_text_with_width_and_cwd(
 ) -> Text<'static> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(input, options);
     let mut w = Writer::new(parser, width, cwd);
     w.run();
@@ -157,11 +162,13 @@ where
     list_needs_blank_before_next_item: Vec<bool>,
     list_item_contains_code_block: Vec<bool>,
     link: Option<LinkState>,
+    table: Option<TableState>,
     needs_newline: bool,
     pending_marker_line: bool,
     in_paragraph: bool,
     in_code_block: bool,
     code_block_lang: Option<String>,
+    code_block_header_visible: bool,
     code_block_buffer: String,
     wrap_width: Option<usize>,
     cwd: Option<PathBuf>,
@@ -189,11 +196,13 @@ where
             list_needs_blank_before_next_item: Vec::new(),
             list_item_contains_code_block: Vec::new(),
             link: None,
+            table: None,
             needs_newline: false,
             pending_marker_line: false,
             in_paragraph: false,
             in_code_block: false,
             code_block_lang: None,
+            code_block_header_visible: false,
             code_block_buffer: String::new(),
             wrap_width,
             cwd: cwd.map(Path::to_path_buf),
@@ -216,6 +225,9 @@ where
 
     fn handle_event(&mut self, event: Event<'a>) {
         self.prepare_for_event(&event);
+        if self.handle_table_event(&event) {
+            return;
+        }
         match event {
             Event::Start(tag) => self.start_tag(tag),
             Event::End(tag) => self.end_tag(tag),
@@ -277,14 +289,12 @@ where
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
             Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
+            Tag::Table(alignments) => self.start_table(alignments),
             Tag::HtmlBlock
             | Tag::FootnoteDefinition(_)
-            | Tag::Table(_)
-            | Tag::TableHead
-            | Tag::TableRow
-            | Tag::TableCell
             | Tag::Image { .. }
             | Tag::MetadataBlock(_) => {}
+            Tag::TableHead | Tag::TableRow | Tag::TableCell => {}
         }
     }
 
@@ -306,15 +316,85 @@ where
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
             TagEnd::Link => self.pop_link(),
+            TagEnd::Table => self.end_table(),
             TagEnd::HtmlBlock
             | TagEnd::FootnoteDefinition
-            | TagEnd::Table
-            | TagEnd::TableHead
-            | TagEnd::TableRow
-            | TagEnd::TableCell
             | TagEnd::Image
             | TagEnd::MetadataBlock(_) => {}
+            TagEnd::TableHead | TagEnd::TableRow | TagEnd::TableCell => {}
         }
+    }
+
+    fn handle_table_event(&mut self, event: &Event<'a>) -> bool {
+        let Some(table) = self.table.as_mut() else {
+            return false;
+        };
+
+        match event {
+            Event::End(TagEnd::Table) => false,
+            Event::Start(Tag::TableHead) => {
+                table.in_header = true;
+                true
+            }
+            Event::End(TagEnd::TableHead) => {
+                table.end_row();
+                table.in_header = false;
+                true
+            }
+            Event::Start(Tag::TableRow) => {
+                table.start_row();
+                true
+            }
+            Event::End(TagEnd::TableRow) => {
+                table.end_row();
+                true
+            }
+            Event::Start(Tag::TableCell) => {
+                table.start_cell();
+                true
+            }
+            Event::End(TagEnd::TableCell) => {
+                table.end_cell();
+                true
+            }
+            Event::Text(text) | Event::Code(text) => {
+                table.push_text(text);
+                true
+            }
+            Event::Html(html) | Event::InlineHtml(html) => {
+                table.push_text(html);
+                true
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                table.push_text(" ");
+                true
+            }
+            Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. })
+            | Event::End(
+                TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link,
+            ) => true,
+            _ => true,
+        }
+    }
+
+    fn start_table(&mut self, alignments: Vec<Alignment>) {
+        self.flush_current_line();
+        if !self.text.lines.is_empty() {
+            self.push_blank_line();
+        }
+        self.table = Some(TableState::new(alignments));
+        self.needs_newline = false;
+    }
+
+    fn end_table(&mut self) {
+        let Some(table) = self.table.take() else {
+            return;
+        };
+        for line in render_table(table, self.wrap_width, self.styles.code) {
+            self.push_line(line);
+            self.flush_current_line();
+        }
+        self.needs_newline = true;
     }
 
     fn start_paragraph(&mut self) {
@@ -570,6 +650,14 @@ where
             /*marker*/ None,
             /*is_list*/ false,
         ));
+        self.code_block_header_visible =
+            self.code_block_lang.is_some() && self.wrap_width.is_some();
+        if self.code_block_header_visible
+            && let Some(lang) = &self.code_block_lang
+        {
+            self.push_line(Line::from(vec!["```".dim(), lang.clone().dim()]));
+            self.flush_current_line();
+        }
         self.needs_newline = true;
     }
 
@@ -586,10 +674,15 @@ where
                     }
                 }
             }
+            if self.code_block_header_visible {
+                self.push_line(Line::from("```".dim()));
+                self.flush_current_line();
+            }
         }
 
         self.needs_newline = true;
         self.in_code_block = false;
+        self.code_block_header_visible = false;
         self.indent_stack.pop();
     }
 
@@ -633,7 +726,8 @@ where
                     .last()
                     .copied()
                     .unwrap_or_default()
-                    .patch(self.styles.code);
+                    .patch(self.styles.code)
+                    .patch(self.styles.link);
                 self.push_span(Span::styled(local_target_display, style));
                 self.line_ends_with_local_link_target = true;
             }

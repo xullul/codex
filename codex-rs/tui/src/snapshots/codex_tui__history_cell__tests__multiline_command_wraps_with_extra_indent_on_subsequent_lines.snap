@@ -5,4 +5,4 @@ expression: rendered
 • Ran set -o pipefail
   │ cargo test -p codex-tui
   │ --quiet
-  └ (no output)
+  └ Done (no output)

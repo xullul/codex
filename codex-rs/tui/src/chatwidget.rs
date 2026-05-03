@@ -7405,7 +7405,10 @@ impl ChatWidget {
                 self.exit_review_mode_after_item();
             }
             ThreadItem::ContextCompaction { .. } => {
-                self.add_info_message("Context compacted".to_string(), /*hint*/ None);
+                self.add_info_message(
+                    "Conversation compacted".to_string(),
+                    Some("Ctrl+T for full transcript".to_string()),
+                );
                 self.add_work_progress(
                     "context compacted".to_string(),
                     "history summarized".to_string(),

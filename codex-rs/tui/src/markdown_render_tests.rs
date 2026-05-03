@@ -684,7 +684,7 @@ fn file_link_hides_destination() {
         Path::new("/Users/example/code/codex"),
     );
     let expected =
-        Text::from(Line::from_iter(["codex-rs/tui/src/markdown_render.rs".cyan()]));
+        Text::from(Line::from_iter(["codex-rs/tui/src/markdown_render.rs".cyan().underlined()]));
     assert_eq!(text, expected);
 }
 
@@ -695,7 +695,7 @@ fn file_link_decodes_percent_encoded_bare_path_destination() {
         Path::new("/Users/example/code/codex"),
     );
     let expected = Text::from(Line::from_iter([
-        "Example Folder/Résumé/report.md".cyan(),
+        "Example Folder/Résumé/report.md".cyan().underlined(),
     ]));
     assert_eq!(text, expected);
 }
@@ -707,7 +707,7 @@ fn file_link_appends_line_number_when_label_lacks_it() {
         Path::new("/Users/example/code/codex"),
     );
     let expected = Text::from(Line::from_iter([
-        "codex-rs/tui/src/markdown_render.rs:74".cyan(),
+        "codex-rs/tui/src/markdown_render.rs:74".cyan().underlined(),
     ]));
     assert_eq!(text, expected);
 }
@@ -718,7 +718,9 @@ fn file_link_keeps_absolute_paths_outside_cwd() {
         "[README.md:74](/Users/example/code/codex/README.md:74)",
         Path::new("/Users/example/code/codex/codex-rs/tui"),
     );
-    let expected = Text::from(Line::from_iter(["/Users/example/code/codex/README.md:74".cyan()]));
+    let expected = Text::from(Line::from_iter([
+        "/Users/example/code/codex/README.md:74".cyan().underlined(),
+    ]));
     assert_eq!(text, expected);
 }
 
@@ -730,7 +732,7 @@ fn file_link_appends_hash_anchor_when_label_lacks_it() {
     );
     let expected =
         Text::from(Line::from_iter([
-            "codex-rs/tui/src/markdown_render.rs:74:3".cyan(),
+            "codex-rs/tui/src/markdown_render.rs:74:3".cyan().underlined(),
         ]));
     assert_eq!(text, expected);
 }
@@ -743,7 +745,7 @@ fn file_link_uses_target_path_for_hash_anchor() {
     );
     let expected =
         Text::from(Line::from_iter([
-            "codex-rs/tui/src/markdown_render.rs:74:3".cyan(),
+            "codex-rs/tui/src/markdown_render.rs:74:3".cyan().underlined(),
         ]));
     assert_eq!(text, expected);
 }
@@ -756,7 +758,7 @@ fn file_link_appends_range_when_label_lacks_it() {
     );
     let expected =
         Text::from(Line::from_iter([
-            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan(),
+            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan().underlined(),
         ]));
     assert_eq!(text, expected);
 }
@@ -769,7 +771,7 @@ fn file_link_uses_target_path_for_range() {
     );
     let expected =
         Text::from(Line::from_iter([
-            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan(),
+            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan().underlined(),
         ]));
     assert_eq!(text, expected);
 }
@@ -782,7 +784,7 @@ fn file_link_appends_hash_range_when_label_lacks_it() {
     );
     let expected =
         Text::from(Line::from_iter([
-            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan(),
+            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan().underlined(),
         ]));
     assert_eq!(text, expected);
 }
@@ -796,7 +798,7 @@ fn multiline_file_link_label_after_styled_prefix_does_not_panic() {
     let expected = Text::from(Line::from_iter([
         "bold".bold(),
         " plain ".into(),
-        "codex-rs/tui/src/markdown_render.rs:74:3".cyan(),
+        "codex-rs/tui/src/markdown_render.rs:74:3".cyan().underlined(),
     ]));
     assert_eq!(text, expected);
 }
@@ -809,7 +811,7 @@ fn file_link_uses_target_path_for_hash_range() {
     );
     let expected =
         Text::from(Line::from_iter([
-            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan(),
+            "codex-rs/tui/src/markdown_render.rs:74:3-76:9".cyan().underlined(),
         ]));
     assert_eq!(text, expected);
 }
@@ -1178,6 +1180,46 @@ fn list_item_after_simple_item_stays_compact() {
     let md = "1. First\n\n2. Second\n";
     let text = render_markdown_text(md);
     assert_eq!(plain_lines(&text), vec!["1. First", "2. Second"]);
+}
+
+#[test]
+fn markdown_table_renders_aligned_when_width_allows() {
+    let md = "| Name | Status | Count |\n|:--|:-:|--:|\n| Codex | ready | 2 |\n| Claude | audit mode | 15 |\n";
+    let text = render_markdown_text_with_width_and_cwd(md, Some(80), None);
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "Name   |   Status   | Count",
+            ":------+-:--------:-+-----:",
+            "Codex  |   ready    |     2",
+            "Claude | audit mode |    15",
+        ]
+    );
+}
+
+#[test]
+fn markdown_table_uses_vertical_fallback_when_narrow() {
+    let md = "| Name | Status | Count |\n|:--|:-:|--:|\n| Codex | ready | 2 |\n| Claude | audit mode | 15 |\n";
+    let text = render_markdown_text_with_width_and_cwd(md, Some(20), None);
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "Name: Codex",
+            "Status: ready",
+            "Count: 2",
+            "",
+            "Name: Claude",
+            "Status: audit mode",
+            "Count: 15",
+        ]
+    );
+}
+
+#[test]
+fn fenced_code_block_with_width_gets_language_boundary() {
+    let md = "```rust\nfn main() {}\n```";
+    let text = render_markdown_text_with_width_and_cwd(md, Some(80), None);
+    assert_eq!(plain_lines(&text), vec!["```rust", "fn main() {}", "```"]);
 }
 
 #[test]

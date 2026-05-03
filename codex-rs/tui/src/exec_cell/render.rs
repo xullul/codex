@@ -533,7 +533,7 @@ impl ExecCell {
             if raw_output.lines.is_empty() {
                 if !call.is_unified_exec_interaction() && !suppress_success_output {
                     lines.extend(prefix_lines(
-                        vec![Line::from("(no output)".dim())],
+                        vec![Line::from(Self::empty_output_label(output.exit_code).dim())],
                         Span::from(layout.output_block.initial_prefix).dim(),
                         Span::from(layout.output_block.subsequent_prefix),
                     ));
@@ -575,6 +575,14 @@ impl ExecCell {
         }
 
         lines
+    }
+
+    fn empty_output_label(exit_code: i32) -> String {
+        if exit_code == 0 {
+            "Done (no output)".to_string()
+        } else {
+            format!("Exited {exit_code} (no output)")
+        }
     }
 
     fn grouped_action_lines(
@@ -1239,7 +1247,38 @@ mod tests {
 
         insta::assert_snapshot!(rendered, @r#"
 • You ran git status --short; pnpm test; dotnet test
-  └ (no output)
+  └ Done (no output)
+"#);
+    }
+
+    #[test]
+    fn failed_empty_output_names_exit_code_snapshot() {
+        let call = ExecCall {
+            call_id: "call-id".to_string(),
+            command: vec!["false".into()],
+            parsed: vec![ParsedCommand::Unknown {
+                cmd: "false".to_string(),
+            }],
+            output: Some(CommandOutput {
+                exit_code: 2,
+                formatted_output: String::new(),
+                aggregated_output: String::new(),
+            }),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        };
+
+        let rendered = ExecCell::new(call, /*animations_enabled*/ false)
+            .display_lines(/*width*/ 80)
+            .iter()
+            .map(render_line_text)
+            .join("\n");
+
+        insta::assert_snapshot!(rendered, @r#"
+• Ran false
+  └ Exited 2 (no output)
 "#);
     }
 

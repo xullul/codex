@@ -1095,7 +1095,22 @@ pub(crate) struct PatchHistoryCell {
 
 impl HistoryCell for PatchHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        create_diff_summary(&self.changes, &self.cwd, width as usize)
+        let file_count = self.changes.len();
+        let mut lines = vec![Line::from(vec![
+            "✓ ".green().bold(),
+            "Applied patch".bold(),
+            format!(
+                " · {file_count} {}",
+                if file_count == 1 { "file" } else { "files" }
+            )
+            .dim(),
+        ])];
+        lines.extend(create_diff_summary(
+            &self.changes,
+            &self.cwd,
+            width as usize,
+        ));
+        lines
     }
 }
 
