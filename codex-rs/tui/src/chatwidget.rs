@@ -63,6 +63,7 @@ use crate::bottom_pane::TerminalTitleSetupView;
 use crate::bottom_pane::WorkProgressRow;
 use crate::bottom_pane::WorkStatePlanItem;
 use crate::bottom_pane::WorkStateSnapshot;
+use crate::bottom_pane::WorkStateStepStatus;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
@@ -424,6 +425,7 @@ mod realtime;
 use self::realtime::RealtimeConversationUiState;
 use self::realtime::RenderedUserMessageEvent;
 mod reasoning_shortcuts;
+mod session_return;
 mod side;
 mod status_surfaces;
 use self::status_surfaces::CachedProjectRootName;
@@ -688,6 +690,45 @@ enum RateLimitSwitchPromptState {
     Shown,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodeDeltaSummary {
+    files: usize,
+    added: usize,
+    removed: usize,
+}
+
+impl CodeDeltaSummary {
+    fn from_changes(
+        changes: &std::collections::HashMap<PathBuf, codex_protocol::protocol::FileChange>,
+    ) -> Self {
+        let (added, removed) = crate::diff_render::file_change_line_counts(changes);
+        Self {
+            files: changes.len(),
+            added,
+            removed,
+        }
+    }
+
+    fn file_count_label(&self) -> String {
+        match self.files {
+            0 => "no files changed".to_string(),
+            1 => "1 file changed".to_string(),
+            count => format!("{count} files changed"),
+        }
+    }
+
+    fn line_delta_label(&self) -> String {
+        format!("+{} -{}", self.added, self.removed)
+    }
+
+    fn work_detail(&self) -> String {
+        if self.files == 0 {
+            return self.file_count_label();
+        }
+        format!("{} · {}", self.file_count_label(), self.line_delta_label())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 enum ConnectorsCacheState {
     #[default]
@@ -937,6 +978,7 @@ pub(crate) struct ChatWidget {
     /// Latest `update_plan` snapshot for the inspectable work-state panel.
     latest_work_state_checklist: Vec<WorkStatePlanItem>,
     latest_work_state_progress: Vec<WorkProgressRow>,
+    latest_code_delta: Option<CodeDeltaSummary>,
     latest_work_state_subagents: Vec<SubagentActivityRow>,
     latest_work_state_active_hooks: HashMap<String, String>,
     /// Whether this turn already produced a copyable response.
@@ -1152,6 +1194,10 @@ pub(crate) struct ChatWidget {
     current_goal_status_indicator: Option<GoalStatusIndicator>,
     current_goal_status: Option<GoalStatusState>,
     goal_status_active_turn_started_at: Option<Instant>,
+    terminal_unfocused_since: Option<Instant>,
+    last_away_summary_key: Option<String>,
+    last_idle_context_nudge_key: Option<String>,
+    instruction_size_warning_emitted: bool,
     external_editor_state: ExternalEditorState,
     realtime_conversation: RealtimeConversationUiState,
     last_rendered_user_message_event: Option<RenderedUserMessageEvent>,
@@ -1309,6 +1355,7 @@ pub(crate) struct ThreadInputState {
     latest_work_state_proposed_plan_markdown: Option<String>,
     latest_work_state_checklist: Vec<WorkStatePlanItem>,
     latest_work_state_progress: Vec<WorkProgressRow>,
+    latest_code_delta: Option<CodeDeltaSummary>,
     latest_work_state_subagents: Vec<SubagentActivityRow>,
 }
 
@@ -2691,31 +2738,37 @@ impl ChatWidget {
 
     pub(crate) fn handle_thread_session(&mut self, session: ThreadSessionState) {
         self.instruction_source_paths = session.instruction_source_paths.clone();
+        self.instruction_size_warning_emitted = false;
         let fork_parent_title = session.fork_parent_title.clone();
         self.on_session_configured_with_display_and_fork_parent_title(
             thread_session_state_to_legacy_event(session),
             SessionConfiguredDisplay::Normal,
             fork_parent_title,
         );
+        self.maybe_record_instruction_size_warning();
     }
 
     pub(crate) fn handle_thread_session_quiet(&mut self, session: ThreadSessionState) {
         self.instruction_source_paths = session.instruction_source_paths.clone();
+        self.instruction_size_warning_emitted = false;
         self.on_session_configured_with_display_and_fork_parent_title(
             thread_session_state_to_legacy_event(session),
             SessionConfiguredDisplay::Quiet,
             /*fork_parent_title*/ None,
         );
+        self.maybe_record_instruction_size_warning();
     }
 
     pub(crate) fn handle_side_thread_session(&mut self, session: ThreadSessionState) {
         self.instruction_source_paths = session.instruction_source_paths.clone();
+        self.instruction_size_warning_emitted = false;
         let fork_parent_title = session.fork_parent_title.clone();
         self.on_session_configured_with_display_and_fork_parent_title(
             thread_session_state_to_legacy_event(session),
             SessionConfiguredDisplay::SideConversation,
             fork_parent_title,
         );
+        self.maybe_record_instruction_size_warning();
     }
 
     fn emit_forked_thread_event(
@@ -2972,6 +3025,7 @@ impl ChatWidget {
         self.had_work_activity = false;
         self.latest_proposed_plan_markdown = None;
         self.latest_work_state_progress.clear();
+        self.latest_code_delta = None;
         self.latest_work_state_active_hooks.clear();
         self.plan_delta_buffer.clear();
         self.plan_item_active = false;
@@ -4059,6 +4113,7 @@ impl ChatWidget {
                 .clone(),
             latest_work_state_checklist: self.latest_work_state_checklist.clone(),
             latest_work_state_progress: self.latest_work_state_progress.clone(),
+            latest_code_delta: self.latest_code_delta.clone(),
             latest_work_state_subagents: self.latest_work_state_subagents.clone(),
         })
     }
@@ -4072,6 +4127,7 @@ impl ChatWidget {
                 input_state.latest_work_state_proposed_plan_markdown;
             self.latest_work_state_checklist = input_state.latest_work_state_checklist;
             self.latest_work_state_progress = input_state.latest_work_state_progress;
+            self.latest_code_delta = input_state.latest_code_delta;
             self.latest_work_state_subagents = input_state.latest_work_state_subagents;
             self.agent_turn_running = input_state.agent_turn_running;
             self.goal_status_active_turn_started_at =
@@ -4156,6 +4212,7 @@ impl ChatWidget {
             self.latest_work_state_proposed_plan_markdown = None;
             self.latest_work_state_checklist.clear();
             self.latest_work_state_progress.clear();
+            self.latest_code_delta = None;
             self.latest_work_state_subagents.clear();
             self.latest_work_state_active_hooks.clear();
         }
@@ -4288,11 +4345,12 @@ impl ChatWidget {
         label: &str,
         changes: &std::collections::HashMap<PathBuf, codex_protocol::protocol::FileChange>,
     ) {
-        let detail = match changes.len() {
-            0 => "no files changed".to_string(),
-            1 => "1 file changed".to_string(),
-            count => format!("{count} files changed"),
-        };
+        let delta = CodeDeltaSummary::from_changes(changes);
+        let detail = delta.work_detail();
+        if delta.files > 0 {
+            self.latest_code_delta = Some(delta);
+            self.refresh_status_surfaces();
+        }
         self.add_work_progress(label.to_string(), detail);
     }
 
@@ -5981,6 +6039,7 @@ impl ChatWidget {
             latest_work_state_proposed_plan_markdown: None,
             latest_work_state_checklist: Vec::new(),
             latest_work_state_progress: Vec::new(),
+            latest_code_delta: None,
             latest_work_state_subagents: Vec::new(),
             latest_work_state_active_hooks: HashMap::new(),
             saw_copy_source_this_turn: false,
@@ -6068,6 +6127,10 @@ impl ChatWidget {
             current_goal_status_indicator: None,
             current_goal_status: None,
             goal_status_active_turn_started_at: None,
+            terminal_unfocused_since: None,
+            last_away_summary_key: None,
+            last_idle_context_nudge_key: None,
+            instruction_size_warning_emitted: false,
             external_editor_state: ExternalEditorState::Closed,
             realtime_conversation: RealtimeConversationUiState::default(),
             last_rendered_user_message_event: None,

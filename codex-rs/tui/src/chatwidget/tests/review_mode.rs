@@ -454,6 +454,7 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
         latest_work_state_proposed_plan_markdown: None,
         latest_work_state_checklist: Vec::new(),
         latest_work_state_progress: Vec::new(),
+        latest_code_delta: None,
         latest_work_state_subagents: Vec::new(),
     }));
 

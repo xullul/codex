@@ -308,6 +308,10 @@ pub enum TuiEvent {
     Resize,
     /// A scheduled repaint that does not necessarily correspond to a terminal size change.
     Draw,
+    /// The terminal/tab gained focus.
+    FocusGained,
+    /// The terminal/tab lost focus.
+    FocusLost,
 }
 
 pub struct Tui {

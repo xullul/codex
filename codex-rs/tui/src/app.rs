@@ -1122,13 +1122,31 @@ See the Codex keymap documentation for supported actions and examples."
         event: TuiEvent,
     ) -> Result<AppRunControl> {
         let terminal_resize_reflow_enabled = self.terminal_resize_reflow_enabled();
-        if terminal_resize_reflow_enabled && matches!(event, TuiEvent::Draw | TuiEvent::Resize) {
+        if terminal_resize_reflow_enabled
+            && matches!(
+                event,
+                TuiEvent::Draw | TuiEvent::Resize | TuiEvent::FocusGained
+            )
+        {
             self.handle_draw_pre_render(tui)?;
-        } else if matches!(event, TuiEvent::Draw | TuiEvent::Resize) {
+        } else if matches!(
+            event,
+            TuiEvent::Draw | TuiEvent::Resize | TuiEvent::FocusGained
+        ) {
             let size = tui.terminal.size()?;
             if size != tui.terminal.last_known_screen_size {
                 self.refresh_status_line();
             }
+        }
+
+        match event {
+            TuiEvent::FocusGained => self
+                .chat_widget
+                .handle_terminal_focus_changed(/*focused*/ true),
+            TuiEvent::FocusLost => self
+                .chat_widget
+                .handle_terminal_focus_changed(/*focused*/ false),
+            _ => {}
         }
 
         if self.overlay.is_some() {
@@ -1146,7 +1164,8 @@ See the Codex keymap documentation for supported actions and examples."
                     let pasted = pasted.replace("\r", "\n");
                     self.chat_widget.handle_paste(pasted);
                 }
-                TuiEvent::Draw | TuiEvent::Resize => {
+                TuiEvent::FocusLost => {}
+                TuiEvent::Draw | TuiEvent::Resize | TuiEvent::FocusGained => {
                     if self.backtrack_render_pending {
                         self.backtrack_render_pending = false;
                         self.render_transcript_once(tui);

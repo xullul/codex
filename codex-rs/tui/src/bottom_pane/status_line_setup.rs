@@ -15,6 +15,7 @@
 //! - Context usage (remaining %, used %, window size)
 //! - Usage limits (5-hour, weekly)
 //! - Session info (thread title, ID, tokens used)
+//! - Work info (task progress, code delta)
 //! - Application version
 
 use ratatui::buffer::Buffer;
@@ -114,6 +115,9 @@ pub(crate) enum StatusLineItem {
 
     /// Latest checklist task progress from `update_plan` (if available).
     TaskProgress,
+
+    /// Latest file-change line delta from patch/apply events (if available).
+    CodeDelta,
 }
 
 impl StatusLineItem {
@@ -153,6 +157,9 @@ impl StatusLineItem {
             StatusLineItem::TaskProgress => {
                 "Latest task progress from update_plan (omitted until available)"
             }
+            StatusLineItem::CodeDelta => {
+                "Latest file-change line delta (omitted until files change)"
+            }
         }
     }
 
@@ -177,6 +184,7 @@ impl StatusLineItem {
             StatusLineItem::FastMode => StatusSurfacePreviewItem::FastMode,
             StatusLineItem::ThreadTitle => StatusSurfacePreviewItem::ThreadTitle,
             StatusLineItem::TaskProgress => StatusSurfacePreviewItem::TaskProgress,
+            StatusLineItem::CodeDelta => StatusSurfacePreviewItem::CodeDelta,
         }
     }
 }

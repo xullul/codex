@@ -571,6 +571,10 @@ impl ChatWidget {
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
             StatusLineItem::TaskProgress => self.terminal_title_task_progress(),
+            StatusLineItem::CodeDelta => self
+                .latest_code_delta
+                .as_ref()
+                .map(CodeDeltaSummary::line_delta_label),
         }
     }
 
@@ -600,6 +604,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::FastMode => StatusLineItem::FastMode,
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
             StatusSurfacePreviewItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,
+            StatusSurfacePreviewItem::CodeDelta => StatusLineItem::CodeDelta,
         };
         self.status_line_value_for_item(&status_line_item)
     }

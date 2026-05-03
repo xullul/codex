@@ -25,6 +25,7 @@ pub(crate) enum StatusSurfacePreviewItem {
     Model,
     ModelWithReasoning,
     TaskProgress,
+    CodeDelta,
 }
 
 impl StatusSurfacePreviewItem {
@@ -51,6 +52,7 @@ impl StatusSurfacePreviewItem {
             StatusSurfacePreviewItem::Model => "gpt-5.2-codex",
             StatusSurfacePreviewItem::ModelWithReasoning => "gpt-5.2-codex medium",
             StatusSurfacePreviewItem::TaskProgress => "Tasks 0/0",
+            StatusSurfacePreviewItem::CodeDelta => "+0 -0",
         }
     }
 
@@ -77,6 +79,7 @@ impl StatusSurfacePreviewItem {
             Self::Model,
             Self::ModelWithReasoning,
             Self::TaskProgress,
+            Self::CodeDelta,
         ]
         .into_iter()
     }

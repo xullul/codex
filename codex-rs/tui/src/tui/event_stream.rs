@@ -249,11 +249,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
             Event::FocusGained => {
                 self.terminal_focused.store(true, Ordering::Relaxed);
                 crate::terminal_palette::requery_default_colors();
-                Some(TuiEvent::Draw)
+                Some(TuiEvent::FocusGained)
             }
             Event::FocusLost => {
                 self.terminal_focused.store(false, Ordering::Relaxed);
-                None
+                Some(TuiEvent::FocusLost)
             }
             _ => None,
         }
@@ -389,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn key_event_skips_unmapped() {
+    async fn focus_lost_is_reported_before_next_key() {
         let (broker, handle, _draw_tx, draw_rx, terminal_focused) = setup();
         let mut stream = make_stream(broker, draw_rx, terminal_focused);
 
@@ -399,8 +399,11 @@ mod tests {
             KeyModifiers::NONE,
         ))));
 
-        let next = stream.next().await.unwrap();
-        match next {
+        let first = stream.next().await.unwrap();
+        assert!(matches!(first, TuiEvent::FocusLost));
+
+        let second = stream.next().await.unwrap();
+        match second {
             TuiEvent::Key(key) => {
                 assert_eq!(key, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
             }

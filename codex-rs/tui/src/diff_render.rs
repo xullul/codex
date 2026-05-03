@@ -141,6 +141,13 @@ pub(crate) fn create_diff_summary(
     render_changes_block(rows, wrap_cols, cwd)
 }
 
+pub(crate) fn file_change_line_counts(changes: &HashMap<PathBuf, FileChange>) -> (usize, usize) {
+    changes.values().fold((0, 0), |(added, removed), change| {
+        let (change_added, change_removed) = file_change_line_count(change);
+        (added + change_added, removed + change_removed)
+    })
+}
+
 // Shared row for per-file presentation
 #[derive(Clone)]
 struct Row {
@@ -155,11 +162,7 @@ struct Row {
 fn collect_rows(changes: &HashMap<PathBuf, FileChange>) -> Vec<Row> {
     let mut rows: Vec<Row> = Vec::new();
     for (path, change) in changes.iter() {
-        let (added, removed) = match change {
-            FileChange::Add { content } => (content.lines().count(), 0),
-            FileChange::Delete { content } => (0, content.lines().count()),
-            FileChange::Update { unified_diff, .. } => calculate_add_remove_from_diff(unified_diff),
-        };
+        let (added, removed) = file_change_line_count(change);
         let move_path = match change {
             FileChange::Update {
                 move_path: Some(new),
@@ -580,6 +583,14 @@ pub(crate) fn calculate_add_remove_from_diff(diff: &str) -> (usize, usize) {
     } else {
         // For unparsable diffs, return 0 for both counts.
         (0, 0)
+    }
+}
+
+fn file_change_line_count(change: &FileChange) -> (usize, usize) {
+    match change {
+        FileChange::Add { content } => (content.lines().count(), 0),
+        FileChange::Delete { content } => (0, content.lines().count()),
+        FileChange::Update { unified_diff, .. } => calculate_add_remove_from_diff(unified_diff),
     }
 }
 
