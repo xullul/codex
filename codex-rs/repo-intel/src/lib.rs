@@ -47,6 +47,7 @@ pub struct RepoIntelSnapshot {
     pub codebase_map: RepoIntelCodebaseMap,
     pub manifests: Vec<RepoIntelFile>,
     pub docs: Vec<RepoIntelFile>,
+    pub prompt_paths: Vec<RepoIntelFile>,
     pub commands: Vec<String>,
     pub warnings: Vec<String>,
     pub files_seen: usize,
@@ -136,6 +137,19 @@ impl RepoIntelSnapshot {
             for doc in &self.docs {
                 out.push_str(&format!("- {}\n", doc.path));
                 if let Some(excerpt) = doc.excerpt.as_deref().filter(|excerpt| !excerpt.is_empty())
+                {
+                    out.push_str(&indent_excerpt(excerpt));
+                }
+            }
+        }
+        if !self.prompt_paths.is_empty() {
+            out.push_str("Prompt-mentioned paths:\n");
+            for file in &self.prompt_paths {
+                out.push_str(&format!("- {}\n", file.path));
+                if let Some(excerpt) = file
+                    .excerpt
+                    .as_deref()
+                    .filter(|excerpt| !excerpt.is_empty())
                 {
                     out.push_str(&indent_excerpt(excerpt));
                 }
@@ -282,6 +296,7 @@ pub fn collect_repo_intel(request: &RepoIntelRequest) -> anyhow::Result<RepoInte
     let files_seen = files.len();
     let manifests = collect_high_signal_files(&root, &files, true, &request.budget);
     let docs = collect_high_signal_files(&root, &files, false, &request.budget);
+    let prompt_paths = collect_prompt_mentioned_paths(&root, &cwd, request);
     let project_kinds = project_kinds(&files, &manifests);
     let languages = language_counts(&files);
     let codebase_map = codebase_map(&files, &manifests);
@@ -303,6 +318,7 @@ pub fn collect_repo_intel(request: &RepoIntelRequest) -> anyhow::Result<RepoInte
         codebase_map,
         manifests,
         docs,
+        prompt_paths,
         commands,
         warnings,
         files_seen,
@@ -491,6 +507,82 @@ fn is_high_signal_doc(path: &Path) -> bool {
         lower.as_str(),
         "agents.md" | "agents.override.md" | "readme.md" | "contributing.md" | "architecture.md"
     ) || path.starts_with("docs") && lower.ends_with(".md")
+}
+
+fn collect_prompt_mentioned_paths(
+    root: &Path,
+    cwd: &Path,
+    request: &RepoIntelRequest,
+) -> Vec<RepoIntelFile> {
+    let mut files = Vec::new();
+    for token in prompt_path_tokens(&request.user_prompt) {
+        if files.len() >= request.budget.max_doc_count {
+            break;
+        }
+        let candidates = if Path::new(&token).is_absolute() {
+            vec![PathBuf::from(&token)]
+        } else if cwd == root {
+            vec![root.join(&token)]
+        } else {
+            vec![cwd.join(&token), root.join(&token)]
+        };
+        for candidate in candidates {
+            let Ok(path) = dunce::canonicalize(&candidate) else {
+                continue;
+            };
+            if !path.starts_with(root) {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let normalized = normalize_path(relative);
+            if files
+                .iter()
+                .any(|file: &RepoIntelFile| file.path == normalized)
+            {
+                break;
+            }
+            let excerpt = path
+                .is_file()
+                .then(|| read_excerpt(&path, request.budget.max_excerpt_bytes))
+                .flatten();
+            files.push(RepoIntelFile {
+                path: normalized,
+                excerpt,
+            });
+            break;
+        }
+    }
+    files
+}
+
+fn prompt_path_tokens(prompt: &str) -> impl Iterator<Item = String> + '_ {
+    prompt
+        .split_ascii_whitespace()
+        .map(|token| {
+            token.trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    '`' | '"'
+                        | '\''
+                        | ','
+                        | '.'
+                        | ';'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '<'
+                        | '>'
+                )
+            })
+        })
+        .filter(|token| !token.is_empty())
+        .filter(|token| !token.contains("://"))
+        .map(str::to_string)
 }
 
 fn read_excerpt(path: &Path, max_bytes: usize) -> Option<String> {
@@ -920,5 +1012,62 @@ mod tests {
         assert!(rendered.contains("Top directory clusters:"));
         assert!(rendered.contains("Likely entrypoints:"));
         assert!(rendered.contains("Likely test surfaces:"));
+    }
+
+    #[test]
+    fn prompt_mentioned_paths_are_rendered_with_bounded_excerpts() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        std::fs::create_dir(tmp.path().join("tmp")).unwrap();
+        std::fs::write(
+            tmp.path().join("tmp").join("progress.md"),
+            "# Progress\n\nRead this before proposing work.\n",
+        )
+        .unwrap();
+        std::fs::create_dir(tmp.path().join("src")).unwrap();
+
+        let snapshot = collect_repo_intel(&RepoIntelRequest {
+            cwd: tmp.path().to_path_buf(),
+            user_prompt: "read tmp/progress.md and src before implementing".to_string(),
+            budget: RepoIntelBudget {
+                max_excerpt_bytes: 24,
+                ..RepoIntelBudget::default()
+            },
+        })
+        .unwrap();
+
+        assert_eq!(
+            snapshot.prompt_paths,
+            vec![
+                RepoIntelFile {
+                    path: "tmp/progress.md".to_string(),
+                    excerpt: Some("# Progress\n\nRead this be\n...".to_string()),
+                },
+                RepoIntelFile {
+                    path: "src".to_string(),
+                    excerpt: None,
+                },
+            ]
+        );
+        let rendered = snapshot.render_for_model();
+        assert!(rendered.contains("Prompt-mentioned paths:"));
+        assert!(rendered.contains("- tmp/progress.md"));
+    }
+
+    #[test]
+    fn prompt_mentioned_paths_do_not_escape_repo_root() {
+        let tmp = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        std::fs::write(outside.path().join("secrets.md"), "do not read\n").unwrap();
+
+        let snapshot = collect_repo_intel(&RepoIntelRequest {
+            cwd: tmp.path().to_path_buf(),
+            user_prompt: format!("read {}", outside.path().join("secrets.md").display()),
+            budget: RepoIntelBudget::default(),
+        })
+        .unwrap();
+
+        assert_eq!(snapshot.prompt_paths, Vec::new());
     }
 }
