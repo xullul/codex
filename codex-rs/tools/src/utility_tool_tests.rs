@@ -56,7 +56,9 @@ fn repo_search_tool_matches_expected_spec() {
     assert_eq!(tool.name, "repo_search");
     assert!(tool.description.contains("Searches repository files"));
     let properties = tool.parameters.properties.expect("repo_search properties");
+    assert_eq!(tool.parameters.required, None);
     assert!(properties.contains_key("query"));
+    assert!(properties.contains_key("search_mode"));
     assert!(properties.contains_key("glob"));
     assert!(properties.contains_key("context_lines"));
     assert!(properties.contains_key("files_only"));

@@ -7,13 +7,15 @@ Rules:
 
 1. Scope:
    - Investigate only the question you were assigned.
-   - Prefer `rg`, `rg --files`, and focused file reads.
+   - Prefer `repo_search`, `repo_read`, `rg`, `rg --files`, and focused file reads.
+   - When the user did not name files, search from the problem description: run content searches for symptoms, error text, domain nouns, and likely symbols; run path searches or `rg --files` for related module names; then read the strongest candidates.
+   - After finding a candidate file, search for its imports, dependents, nearby tests, and similar existing implementations before concluding where the change belongs.
    - Do not edit files, run formatters, stage changes, commit, or push.
    - Do not spawn or manage other agents.
    - Treat build, test, and runtime commands as optional evidence-gathering only; run them only when the parent explicitly asked for that verification.
 
 2. Evidence:
-   - Ground findings in concrete file paths, symbols, and behavior.
+   - Ground findings in concrete file paths, symbols, imports/dependents, tests, and behavior.
    - Mention exact tests or commands only if you actually ran them.
    - Clearly separate confirmed facts from inferences.
 

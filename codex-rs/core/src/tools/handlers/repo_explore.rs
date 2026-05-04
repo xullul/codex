@@ -5,6 +5,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use codex_protocol::permissions::ReadDenyMatcher;
+use regex_lite::Regex;
 use serde::Deserialize;
 use tokio::fs;
 use tokio::process::Command;
@@ -30,6 +31,7 @@ const MAX_READ_LIMIT: usize = 400;
 const MAX_READ_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_FALLBACK_FILES: usize = 5_000;
 const RG_TIMEOUT: Duration = Duration::from_secs(8);
+const VCS_DIRECTORIES_TO_EXCLUDE: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
 
 fn default_offset() -> usize {
     0
@@ -49,7 +51,9 @@ fn default_read_limit() -> usize {
 
 #[derive(Deserialize)]
 struct RepoSearchArgs {
-    query: String,
+    query: Option<String>,
+    #[serde(default)]
+    search_mode: RepoSearchMode,
     path: Option<String>,
     glob: Option<String>,
     #[serde(default)]
@@ -60,6 +64,14 @@ struct RepoSearchArgs {
     offset: usize,
     #[serde(default)]
     files_only: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum RepoSearchMode {
+    #[default]
+    Content,
+    Paths,
 }
 
 #[derive(Deserialize)]
@@ -90,7 +102,10 @@ impl ToolHandler for RepoSearchHandler {
         ensure_path_read_allowed(&base_path, read_deny_matcher.as_ref())?;
 
         let result = if read_deny_matcher.is_none() {
-            rg_search(&base_path, &args).await
+            match args.search_mode {
+                RepoSearchMode::Content => rg_search(&base_path, &args).await,
+                RepoSearchMode::Paths => rg_path_search(&base_path, &args).await,
+            }
         } else {
             fallback_search(&base_path, &args, read_deny_matcher.as_ref()).await
         }?;
@@ -133,10 +148,21 @@ fn function_arguments(payload: ToolPayload, name: &str) -> Result<String, Functi
 }
 
 fn validate_search_args(args: &RepoSearchArgs) -> Result<(), FunctionCallError> {
-    if args.query.is_empty() {
-        return Err(FunctionCallError::RespondToModel(
-            "query must not be empty".to_string(),
-        ));
+    match args.search_mode {
+        RepoSearchMode::Content => {
+            if args.query.as_deref().unwrap_or("").is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "query must not be empty when search_mode is content".to_string(),
+                ));
+            }
+        }
+        RepoSearchMode::Paths => {
+            if args.glob.as_deref().unwrap_or("").is_empty() {
+                return Err(FunctionCallError::RespondToModel(
+                    "glob must not be empty when search_mode is paths".to_string(),
+                ));
+            }
+        }
     }
     if args.limit == 0 {
         return Err(FunctionCallError::RespondToModel(
@@ -193,11 +219,14 @@ fn ensure_path_read_allowed(
 async fn rg_search(path: &Path, args: &RepoSearchArgs) -> Result<String, FunctionCallError> {
     let mut command = Command::new("rg");
     command
+        .arg("--hidden")
         .arg("--color")
         .arg("never")
         .arg("--line-number")
         .arg("--with-filename")
-        .arg("--no-heading");
+        .arg("--no-heading")
+        .arg("--max-columns")
+        .arg("500");
     if args.files_only {
         command.arg("--files-with-matches");
     }
@@ -207,9 +236,43 @@ async fn rg_search(path: &Path, args: &RepoSearchArgs) -> Result<String, Functio
     if let Some(glob) = args.glob.as_deref().filter(|glob| !glob.is_empty()) {
         command.arg("--glob").arg(glob);
     }
-    command.arg(&args.query).arg(path);
+    add_vcs_exclusions(&mut command);
+    let query = args.query.as_deref().unwrap_or("");
+    if query.starts_with('-') {
+        command.arg("-e").arg(query);
+    } else {
+        command.arg(query);
+    }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+    run_rg_command(command, path, args).await
+}
+
+async fn rg_path_search(path: &Path, args: &RepoSearchArgs) -> Result<String, FunctionCallError> {
+    let mut command = Command::new("rg");
+    command.arg("--files").arg("--hidden");
+    if let Some(glob) = args.glob.as_deref().filter(|glob| !glob.is_empty()) {
+        command.arg("--glob").arg(glob);
+    }
+    add_vcs_exclusions(&mut command);
+    command.arg(path);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    run_rg_command(command, path, args).await
+}
+
+fn add_vcs_exclusions(command: &mut Command) {
+    for dir in VCS_DIRECTORIES_TO_EXCLUDE {
+        command.arg("--glob").arg(format!("!{dir}/**"));
+        command.arg("--glob").arg(format!("!**/{dir}/**"));
+    }
+}
+
+async fn run_rg_command(
+    mut command: Command,
+    path: &Path,
+    args: &RepoSearchArgs,
+) -> Result<String, FunctionCallError> {
     let output = timeout(RG_TIMEOUT, command.output())
         .await
         .map_err(|_| {
@@ -242,7 +305,21 @@ async fn fallback_search(
     args: &RepoSearchArgs,
     read_deny_matcher: Option<&ReadDenyMatcher>,
 ) -> Result<String, FunctionCallError> {
+    match args.search_mode {
+        RepoSearchMode::Content => fallback_content_search(path, args, read_deny_matcher).await,
+        RepoSearchMode::Paths => fallback_path_search(path, args, read_deny_matcher).await,
+    }
+}
+
+async fn fallback_content_search(
+    path: &Path,
+    args: &RepoSearchArgs,
+    read_deny_matcher: Option<&ReadDenyMatcher>,
+) -> Result<String, FunctionCallError> {
     let files = collect_search_files(path, args.glob.as_deref(), read_deny_matcher).await?;
+    let query = args.query.as_deref().unwrap_or("");
+    let regex = Regex::new(query)
+        .map_err(|err| FunctionCallError::RespondToModel(format!("invalid regex: {err}")))?;
     let mut matches = Vec::new();
     for file in files {
         let Ok(lines) = read_text_lines(&file).await else {
@@ -251,7 +328,7 @@ async fn fallback_search(
         let matching_indexes = lines
             .iter()
             .enumerate()
-            .filter_map(|(idx, line)| line.contains(&args.query).then_some(idx))
+            .filter_map(|(idx, line)| regex.is_match(line).then_some(idx))
             .collect::<Vec<_>>();
         if args.files_only {
             if !matching_indexes.is_empty() {
@@ -268,6 +345,27 @@ async fn fallback_search(
         }
     }
 
+    if matches.is_empty() {
+        return Ok(format!("No matches found under {}", path.display()));
+    }
+    Ok(format_search_output(
+        path,
+        &matches.join("\n"),
+        args.offset,
+        args.limit,
+    ))
+}
+
+async fn fallback_path_search(
+    path: &Path,
+    args: &RepoSearchArgs,
+    read_deny_matcher: Option<&ReadDenyMatcher>,
+) -> Result<String, FunctionCallError> {
+    let files = collect_search_files(path, args.glob.as_deref(), read_deny_matcher).await?;
+    let matches = files
+        .iter()
+        .map(|file| file.display().to_string())
+        .collect::<Vec<_>>();
     if matches.is_empty() {
         return Ok(format!("No matches found under {}", path.display()));
     }
@@ -313,6 +411,13 @@ async fn collect_search_files(
                 FunctionCallError::RespondToModel(format!("failed to inspect entry: {err}"))
             })?;
             if file_type.is_dir() {
+                let is_vcs_dir = entry_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| VCS_DIRECTORIES_TO_EXCLUDE.contains(&name));
+                if is_vcs_dir {
+                    continue;
+                }
                 queue.push_back(entry_path);
             } else if file_type.is_file()
                 && glob_matches(glob, &entry_path)

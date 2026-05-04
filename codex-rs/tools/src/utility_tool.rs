@@ -1,6 +1,7 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
+use serde_json::json;
 use std::collections::BTreeMap;
 
 pub fn create_list_dir_tool() -> ToolSpec {
@@ -44,8 +45,18 @@ pub fn create_repo_search_tool() -> ToolSpec {
         (
             "query".to_string(),
             JsonSchema::string(Some(
-                "Pattern to search for. Treated as a ripgrep regex.".to_string(),
+                "Pattern to search for in content mode. Treated as a ripgrep regex; required when search_mode is `content`.".to_string(),
             )),
+        ),
+        (
+            "search_mode".to_string(),
+            JsonSchema::string_enum(
+                vec![json!("content"), json!("paths")],
+                Some(
+                    "Search content with a ripgrep regex, or list file paths matching `glob`. Defaults to `content`."
+                        .to_string(),
+                ),
+            ),
         ),
         (
             "path".to_string(),
@@ -57,7 +68,7 @@ pub fn create_repo_search_tool() -> ToolSpec {
         (
             "glob".to_string(),
             JsonSchema::string(Some(
-                "Optional ripgrep glob such as `*.rs` or `src/**/*.ts`.".to_string(),
+                "Optional ripgrep glob such as `*.rs` or `src/**/*.ts`; required when search_mode is `paths`.".to_string(),
             )),
         ),
         (
@@ -69,7 +80,7 @@ pub fn create_repo_search_tool() -> ToolSpec {
         (
             "limit".to_string(),
             JsonSchema::number(Some(
-                "Maximum number of matching lines to return.".to_string(),
+                "Maximum number of matching lines or paths to return.".to_string(),
             )),
         ),
         (
@@ -81,7 +92,7 @@ pub fn create_repo_search_tool() -> ToolSpec {
         (
             "files_only".to_string(),
             JsonSchema::boolean(Some(
-                "When true, return only matching file paths.".to_string(),
+                "When true in content mode, return only file paths with matching content.".to_string(),
             )),
         ),
     ]);
@@ -95,7 +106,7 @@ pub fn create_repo_search_tool() -> ToolSpec {
         defer_loading: None,
         parameters: JsonSchema::object(
             properties,
-            Some(vec!["query".to_string()]),
+            /*required*/ None,
             Some(false.into()),
         ),
         output_schema: None,

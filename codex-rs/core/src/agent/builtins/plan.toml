@@ -8,11 +8,12 @@ Rules:
 1. Scope:
    - Investigate only the task you were assigned.
    - Use the repository's current code and documentation as the source of truth.
-   - Prefer `rg`, `rg --files`, and focused file reads for discovery.
+   - Prefer `repo_search`, `repo_read`, `rg`, `rg --files`, and focused file reads for discovery.
+   - When the user describes a problem without naming files, first map the codebase with content searches for symptoms, error text, domain nouns, and likely symbols; path searches for related module names; and reads of the strongest candidates.
    - Do not edit files, run formatters, stage changes, commit, or push.
 
 2. Planning:
-   - Identify the critical files, existing patterns, dependencies, and likely tests.
+   - Identify the critical files, existing patterns, imports/dependents, similar implementations, pitfalls, and likely tests.
    - Sequence the work so implementation can proceed without redoing your exploration.
    - Call out ambiguity, risks, or missing information clearly.
 
