@@ -2,8 +2,10 @@ use super::*;
 use crate::JsonSchema;
 use codex_app_server_protocol::AppInfo;
 use pretty_assertions::assert_eq;
+use rmcp::model::Tool;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[test]
 fn create_tool_search_tool_deduplicates_and_renders_enabled_sources() {
@@ -45,6 +47,83 @@ fn create_tool_search_tool_deduplicates_and_renders_enabled_sources() {
                     ),
                 ]), Some(vec!["query".to_string()]), Some(false.into())),
         }
+    );
+}
+
+#[test]
+fn collect_tool_search_source_infos_uses_server_instructions_after_connector_metadata() {
+    assert_eq!(
+        collect_tool_search_source_infos([
+            ToolSearchSource {
+                server_name: "reference",
+                server_instructions: Some("Use for policy lookup."),
+                connector_name: None,
+                connector_description: None,
+            },
+            ToolSearchSource {
+                server_name: "codex_apps",
+                server_instructions: Some("Ignored while connector description exists."),
+                connector_name: Some("Calendar"),
+                connector_description: Some("Plan events."),
+            },
+        ]),
+        vec![
+            ToolSearchSourceInfo {
+                name: "reference".to_string(),
+                description: Some("Use for policy lookup.".to_string()),
+            },
+            ToolSearchSourceInfo {
+                name: "Calendar".to_string(),
+                description: Some("Plan events.".to_string()),
+            },
+        ],
+    );
+}
+
+#[test]
+fn tool_search_result_source_uses_server_instructions_for_namespace_description() {
+    let source = ToolSearchResultSource {
+        server_name: "reference",
+        tool_namespace: "mcp__reference__",
+        tool_name: "lookup_policy",
+        tool: &Tool {
+            name: "lookup-policy".to_string().into(),
+            title: None,
+            description: Some("Look up a policy.".to_string().into()),
+            input_schema: Arc::new(rmcp::model::object(json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            }))),
+            output_schema: None,
+            annotations: None,
+            execution: None,
+            icons: None,
+            meta: None,
+        },
+        server_instructions: Some("Use for policy lookup."),
+        connector_name: None,
+        connector_description: None,
+    };
+
+    assert_eq!(
+        tool_search_result_source_to_loadable_tool_spec(source).expect("convert tool result"),
+        LoadableToolSpec::Namespace(ResponsesApiNamespace {
+            name: "mcp__reference__".to_string(),
+            description: "Use for policy lookup.".to_string(),
+            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                name: "lookup_policy".to_string(),
+                description: "Look up a policy.".to_string(),
+                strict: false,
+                defer_loading: Some(true),
+                parameters: JsonSchema::object(
+                    BTreeMap::new(),
+                    /*required*/ None,
+                    Some(false.into())
+                ),
+                output_schema: None,
+            })],
+        }),
     );
 }
 

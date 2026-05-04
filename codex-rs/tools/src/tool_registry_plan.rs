@@ -296,6 +296,7 @@ pub fn build_tool_registry_plan(
                 collect_tool_search_source_infos(deferred_mcp_tools.iter().map(|tool| {
                     ToolSearchSource {
                         server_name: tool.server_name,
+                        server_instructions: tool.server_instructions,
                         connector_name: tool.connector_name,
                         connector_description: tool.connector_description,
                     }

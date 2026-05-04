@@ -26,6 +26,7 @@ pub struct ToolSearchSourceInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToolSearchSource<'a> {
     pub server_name: &'a str,
+    pub server_instructions: Option<&'a str>,
     pub connector_name: Option<&'a str>,
     pub connector_description: Option<&'a str>,
 }
@@ -36,6 +37,7 @@ pub struct ToolSearchResultSource<'a> {
     pub tool_namespace: &'a str,
     pub tool_name: &'a str,
     pub tool: &'a rmcp::model::Tool,
+    pub server_instructions: Option<&'a str>,
     pub connector_name: Option<&'a str>,
     pub connector_description: Option<&'a str>,
 }
@@ -226,6 +228,13 @@ fn tool_search_result_source_namespace_description(source: ToolSearchResultSourc
                 .filter(|connector_name| !connector_name.is_empty())
                 .map(|connector_name| format!("Tools for working with {connector_name}."))
         })
+        .or_else(|| {
+            source
+                .server_instructions
+                .map(str::trim)
+                .filter(|instructions| !instructions.is_empty())
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| default_namespace_description(source.tool_namespace))
 }
 
@@ -265,7 +274,11 @@ pub fn collect_tool_search_source_infos<'a>(
 
             Some(ToolSearchSourceInfo {
                 name: name.to_string(),
-                description: None,
+                description: tool
+                    .server_instructions
+                    .map(str::trim)
+                    .filter(|instructions| !instructions.is_empty())
+                    .map(str::to_string),
             })
         })
         .collect()

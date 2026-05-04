@@ -974,6 +974,56 @@ async fn search_tool_description_falls_back_to_connector_name_without_descriptio
 }
 
 #[tokio::test]
+async fn search_tool_description_uses_server_instructions_without_connector_metadata() {
+    let model_info = search_capable_model_info().await;
+    let mut features = Features::with_defaults();
+    features.enable(Feature::Apps);
+    features.enable(Feature::ToolSearch);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        Some(HashMap::from([(
+            "mcp__reference__lookup_policy".to_string(),
+            ToolInfo {
+                server_name: "reference".to_string(),
+                callable_name: "lookup_policy".to_string(),
+                callable_namespace: "mcp__reference__".to_string(),
+                server_instructions: Some("Use for policy lookup.".to_string()),
+                tool: mcp_tool(
+                    "lookup-policy",
+                    "Look up a policy",
+                    serde_json::json!({"type": "object"}),
+                ),
+                connector_id: None,
+                connector_name: None,
+                plugin_display_names: Vec::new(),
+                connector_description: None,
+            },
+        )])),
+        &[],
+    )
+    .build();
+    let search_tool = find_tool(&tools, TOOL_SEARCH_TOOL_NAME);
+    let ToolSpec::ToolSearch { description, .. } = &search_tool.spec else {
+        panic!("expected tool_search tool");
+    };
+
+    assert!(description.contains("- reference: Use for policy lookup."));
+}
+
+#[tokio::test]
 async fn search_tool_registers_namespaced_mcp_tool_aliases() {
     let model_info = search_capable_model_info().await;
     let mut features = Features::with_defaults();

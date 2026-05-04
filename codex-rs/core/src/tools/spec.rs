@@ -119,6 +119,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
             .map(|tool| ToolRegistryPlanDeferredTool {
                 name: tool.canonical_tool_name(),
                 server_name: tool.server_name.as_str(),
+                server_instructions: tool.server_instructions.as_deref(),
                 connector_name: tool.connector_name.as_deref(),
                 connector_description: tool.connector_description.as_deref(),
             })

@@ -2385,6 +2385,7 @@ fn deferred_mcp_tool<'a>(
     ToolRegistryPlanDeferredTool {
         name: ToolName::namespaced(tool_namespace, tool_name),
         server_name,
+        server_instructions: None,
         connector_name,
         connector_description,
     }

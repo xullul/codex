@@ -371,6 +371,37 @@ mod tests {
         assert!(count_results_for_server(&results, "other-server") <= TOOL_SEARCH_DEFAULT_LIMIT);
     }
 
+    #[test]
+    fn mcp_server_instructions_are_searchable_and_describe_namespace() {
+        let mut tool = tool_info("reference", "lookup_policy", "Reference");
+        tool.server_instructions = Some("Use for alpha-zeta retention policy lookup.".to_string());
+        let tools =
+            std::collections::HashMap::from([("mcp__reference__lookup_policy".to_string(), tool)]);
+        let handler = handler_from_tools(Some(&tools), &[]);
+
+        let results = handler.search("alpha-zeta retention", /*limit*/ 1, false);
+
+        assert_eq!(
+            results.expect("search should serialize"),
+            vec![LoadableToolSpec::Namespace(ResponsesApiNamespace {
+                name: "mcp__reference__".to_string(),
+                description: "Use for alpha-zeta retention policy lookup.".to_string(),
+                tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
+                    name: "lookup_policy".to_string(),
+                    description: "Reference desktop tool".to_string(),
+                    strict: false,
+                    defer_loading: Some(true),
+                    parameters: codex_tools::JsonSchema::object(
+                        Default::default(),
+                        /*required*/ None,
+                        Some(false.into()),
+                    ),
+                    output_schema: None,
+                })],
+            })]
+        );
+    }
+
     fn numbered_tools(
         server_name: &str,
         description_prefix: &str,
