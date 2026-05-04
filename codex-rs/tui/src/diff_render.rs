@@ -132,6 +132,7 @@ impl From<DiffSummary> for Box<dyn Renderable> {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn create_diff_summary(
     changes: &HashMap<PathBuf, FileChange>,
     cwd: &Path,
@@ -150,9 +151,11 @@ pub(crate) fn file_change_line_counts(changes: &HashMap<PathBuf, FileChange>) ->
 
 // Shared row for per-file presentation
 #[derive(Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
 struct Row {
     #[allow(dead_code)]
     path: PathBuf,
+    #[cfg_attr(not(test), allow(dead_code))]
     move_path: Option<PathBuf>,
     added: usize,
     removed: usize,
@@ -192,6 +195,7 @@ fn render_line_count_summary(added: usize, removed: usize) -> Vec<RtSpan<'static
     spans
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn render_changes_block(rows: Vec<Row>, wrap_cols: usize, cwd: &Path) -> Vec<RtLine<'static>> {
     let mut out: Vec<RtLine<'static>> = Vec::new();
 
@@ -264,6 +268,7 @@ fn render_changes_block(rows: Vec<Row>, wrap_cols: usize, cwd: &Path) -> Vec<RtL
 /// Detect the programming language for a file path by its extension.
 /// Returns the raw extension string for `normalize_lang` / `find_syntax`
 /// to resolve downstream.
+#[cfg_attr(not(test), allow(dead_code))]
 fn detect_lang_for_path(path: &Path) -> Option<String> {
     let ext = path.extension()?.to_str()?;
     Some(ext.to_string())

@@ -611,9 +611,7 @@ fn work_activity_kind(label: &str) -> Option<WorkActivityKind> {
             Some(WorkActivityKind::Images)
         }
         "hook started" | "hook completed" => Some(WorkActivityKind::Hooks),
-        "context compacted" | "return summary" | "instruction warning" => {
-            Some(WorkActivityKind::ContextCompaction)
-        }
+        "context compacted" | "instruction warning" => Some(WorkActivityKind::ContextCompaction),
         "repo intel" | "repo intel skipped" | "repo intel failed" => {
             Some(WorkActivityKind::RepoIntel)
         }

@@ -327,7 +327,6 @@ impl App {
     pub(super) fn push_thread_interactive_request(&mut self, request: ThreadInteractiveRequest) {
         match request {
             ThreadInteractiveRequest::Approval(request) => {
-                self.render_inactive_patch_preview(&request);
                 self.chat_widget.push_approval_request(request);
             }
             ThreadInteractiveRequest::McpServerElicitation(request) => {
@@ -335,23 +334,6 @@ impl App {
                     .push_mcp_server_elicitation_request(request);
             }
         }
-    }
-
-    fn render_inactive_patch_preview(&mut self, request: &ApprovalRequest) {
-        let ApprovalRequest::ApplyPatch {
-            thread_label,
-            cwd,
-            changes,
-            ..
-        } = request
-        else {
-            return;
-        };
-        if thread_label.is_none() || changes.is_empty() {
-            return;
-        }
-        self.chat_widget
-            .add_to_history(history_cell::new_patch_event(changes.clone(), cwd));
     }
 
     pub(super) async fn pending_inactive_thread_requests(&self) -> Vec<(ThreadId, ServerRequest)> {

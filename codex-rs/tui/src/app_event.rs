@@ -50,6 +50,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_realtime_webrtc::RealtimeWebrtcEvent;
 use codex_realtime_webrtc::RealtimeWebrtcSessionHandle;
 
+use crate::history_cell::AssistantMessageMetadata;
 use crate::history_cell::HistoryCell;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,9 +444,12 @@ pub(crate) enum AppEvent {
     /// finalization. The `App` handler walks backward through `transcript_cells`
     /// to find the `AgentMessageCell` run and splices in the consolidated cell.
     /// The `cwd` keeps local file-link display stable across the final re-render.
+    /// Metadata is snapshotted at finalization so transcript-only labels do not
+    /// drift after later model changes.
     ConsolidateAgentMessage {
         source: String,
         cwd: PathBuf,
+        metadata: AssistantMessageMetadata,
     },
 
     /// Replace the contiguous run of streaming `ProposedPlanStreamCell`s at the

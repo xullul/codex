@@ -912,21 +912,11 @@ fn render_offset_content(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::protocol::ExecCommandSource;
-    use codex_protocol::protocol::ReviewDecision;
     use insta::assert_snapshot;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
     use std::sync::Arc;
-    use std::time::Duration;
 
-    use crate::exec_cell::CommandOutput;
-    use crate::history_cell;
     use crate::history_cell::HistoryCell;
-    use crate::history_cell::new_patch_event;
-    use codex_protocol::parse_command::ParsedCommand;
-    use codex_protocol::protocol::FileChange;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::text::Text;
@@ -1101,71 +1091,6 @@ mod tests {
             out.push('\n');
         }
         out
-    }
-
-    #[test]
-    fn transcript_overlay_apply_patch_scroll_vt100_clears_previous_page() {
-        let cwd = PathBuf::from("/repo");
-        let mut cells: Vec<Arc<dyn HistoryCell>> = Vec::new();
-
-        let mut approval_changes = HashMap::new();
-        approval_changes.insert(
-            PathBuf::from("foo.txt"),
-            FileChange::Add {
-                content: "hello\nworld\n".to_string(),
-            },
-        );
-        let approval_cell: Arc<dyn HistoryCell> = Arc::new(new_patch_event(approval_changes, &cwd));
-        cells.push(approval_cell);
-
-        let mut apply_changes = HashMap::new();
-        apply_changes.insert(
-            PathBuf::from("foo.txt"),
-            FileChange::Add {
-                content: "hello\nworld\n".to_string(),
-            },
-        );
-        let apply_begin_cell: Arc<dyn HistoryCell> = Arc::new(new_patch_event(apply_changes, &cwd));
-        cells.push(apply_begin_cell);
-
-        let apply_end_cell: Arc<dyn HistoryCell> = history_cell::new_approval_decision_cell(
-            vec!["ls".into()],
-            ReviewDecision::Approved,
-            history_cell::ApprovalDecisionActor::User,
-        )
-        .into();
-        cells.push(apply_end_cell);
-
-        let mut exec_cell = crate::exec_cell::new_active_exec_command(
-            "exec-1".into(),
-            vec!["bash".into(), "-lc".into(), "ls".into()],
-            vec![ParsedCommand::Unknown { cmd: "ls".into() }],
-            ExecCommandSource::Agent,
-            /*interaction_input*/ None,
-            /*animations_enabled*/ true,
-        );
-        exec_cell.complete_call(
-            "exec-1",
-            CommandOutput {
-                exit_code: 0,
-                aggregated_output: "src\nREADME.md\n".into(),
-                formatted_output: "src\nREADME.md\n".into(),
-            },
-            Duration::from_millis(420),
-        );
-        let exec_cell: Arc<dyn HistoryCell> = Arc::new(exec_cell);
-        cells.push(exec_cell);
-
-        let mut overlay = transcript_overlay(cells);
-        let area = Rect::new(0, 0, 80, 12);
-        let mut buf = Buffer::empty(area);
-
-        overlay.render(area, &mut buf);
-        overlay.view.scroll_offset = 0;
-        overlay.render(area, &mut buf);
-
-        let snapshot = buffer_to_text(&buf, area);
-        assert_snapshot!("transcript_overlay_apply_patch_scroll_vt100", snapshot);
     }
 
     #[test]

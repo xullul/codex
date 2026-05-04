@@ -79,7 +79,7 @@ async fn session_return_unfocused_and_always_completion_notifications_remain_imm
 }
 
 #[tokio::test]
-async fn session_return_away_summary_prefers_delta_and_deduplicates_repeated_returns() {
+async fn session_return_does_not_emit_away_summary() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let start = Instant::now();
 
@@ -91,26 +91,8 @@ async fn session_return_away_summary_prefers_delta_and_deduplicates_repeated_ret
         start + Duration::from_secs(5 * 60 + 1),
     );
 
-    let cells = drain_insert_history(&mut rx);
-    assert_eq!(cells.len(), 1, "expected one return summary");
-    let rendered = lines_to_single_string(&cells[0]);
-    assert!(
-        rendered.contains("While you were away"),
-        "expected away summary, got {rendered:?}"
-    );
-    assert!(
-        rendered.contains("latest work: command completed (cargo test)"),
-        "expected delta latest-work summary, got {rendered:?}"
-    );
-    assert!(
-        !rendered.contains("command started"),
-        "summary should prefer changed work, got {rendered:?}"
-    );
-
-    chat.handle_terminal_focus_changed_at(/*focused*/ false, start + Duration::from_secs(360));
-    chat.handle_terminal_focus_changed_at(/*focused*/ true, start + Duration::from_secs(700));
     assert!(
         drain_insert_history(&mut rx).is_empty(),
-        "unchanged away state should not emit a repeated summary"
+        "returning from a short away period should not emit a summary"
     );
 }

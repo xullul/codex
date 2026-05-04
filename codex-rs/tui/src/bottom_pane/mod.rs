@@ -135,7 +135,6 @@ pub(crate) use title_setup::preview_line_for_title_items;
 pub(crate) use work_state_view::WorkProgressRow;
 pub(crate) use work_state_view::WorkStatePlanItem;
 pub(crate) use work_state_view::WorkStateSnapshot;
-pub(crate) use work_state_view::WorkStateStepStatus;
 mod paste_burst;
 mod pending_input_preview;
 mod pending_thread_approvals;
@@ -481,6 +480,7 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn status_widget(&self) -> Option<&StatusIndicatorWidget> {
         self.status.as_ref()
     }

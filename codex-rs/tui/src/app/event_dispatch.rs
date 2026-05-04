@@ -206,7 +206,11 @@ impl App {
             AppEvent::EndInitialHistoryReplayBuffer => {
                 self.finish_initial_history_replay_buffer(tui);
             }
-            AppEvent::ConsolidateAgentMessage { source, cwd } => {
+            AppEvent::ConsolidateAgentMessage {
+                source,
+                cwd,
+                metadata,
+            } => {
                 if !self.terminal_resize_reflow_enabled() {
                     self.transcript_reflow.clear();
                     return Ok(AppRunControl::Continue);
@@ -215,8 +219,9 @@ impl App {
                 let start =
                     trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
                 if start < end {
-                    let consolidated: Arc<dyn HistoryCell> =
-                        Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
+                    let consolidated: Arc<dyn HistoryCell> = Arc::new(
+                        history_cell::AgentMarkdownCell::new_with_metadata(source, &cwd, metadata),
+                    );
                     self.transcript_cells
                         .splice(start..end, std::iter::once(consolidated.clone()));
 

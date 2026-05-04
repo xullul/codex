@@ -63,7 +63,6 @@ use crate::bottom_pane::TerminalTitleSetupView;
 use crate::bottom_pane::WorkProgressRow;
 use crate::bottom_pane::WorkStatePlanItem;
 use crate::bottom_pane::WorkStateSnapshot;
-use crate::bottom_pane::WorkStateStepStatus;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
@@ -438,6 +437,7 @@ use crate::streaming::controller::PlanStreamController;
 use crate::streaming::controller::StreamController;
 
 use chrono::Local;
+use chrono::TimeZone;
 use codex_file_search::FileMatch;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::InputModality;
@@ -1073,6 +1073,7 @@ pub(crate) struct ChatWidget {
     /// hidden for that thread instead of resurfacing it on every matching draft.
     dismissed_plan_mode_nudge_scopes: HashSet<PlanModeNudgeScope>,
     last_turn_id: Option<String>,
+    active_assistant_turn_started_at: Option<i64>,
     budget_limited_turn_ids: HashSet<String>,
     thread_name: Option<String>,
     thread_rename_block_message: Option<String>,
@@ -1138,15 +1139,10 @@ pub(crate) struct ChatWidget {
     is_review_mode: bool,
     // Snapshot of token usage to restore after review mode exits.
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
-    // Whether the next streamed assistant content should be preceded by a final message separator.
-    //
-    // This is set whenever we insert a visible history cell that conceptually belongs to a turn.
-    // The separator itself is only rendered if the turn recorded "work" activity.
+    // Whether non-stream work occurred before the next streamed assistant content.
+    // Kept as turn-state bookkeeping and cleared before a new stream starts.
     needs_final_message_separator: bool,
     // Whether the current turn performed "work" (exec commands, MCP tool calls, patch applications).
-    //
-    // This gates rendering of the "Worked for …" separator so purely conversational turns don't
-    // show an empty divider.
     had_work_activity: bool,
     // Whether the current turn emitted a plan update.
     saw_plan_update_this_turn: bool,
@@ -1207,8 +1203,6 @@ pub(crate) struct ChatWidget {
     current_goal_status: Option<GoalStatusState>,
     goal_status_active_turn_started_at: Option<Instant>,
     terminal_unfocused_since: Option<Instant>,
-    away_snapshot: Option<AwaySnapshot>,
-    last_away_summary_key: Option<String>,
     last_idle_context_nudge_key: Option<String>,
     instruction_size_warning_emitted: bool,
     external_editor_state: ExternalEditorState,
@@ -1233,16 +1227,6 @@ struct CollabAgentMetadata {
 struct DelayedCompletionNotification {
     notification: Notification,
     deadline: Instant,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct AwaySnapshot {
-    progress_count: usize,
-    latest_progress: Option<WorkProgressRow>,
-    active_step: Option<String>,
-    pending_approval: Option<String>,
-    subagents: Vec<SubagentActivityRow>,
-    background_summary: Option<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -2236,6 +2220,16 @@ impl ChatWidget {
                 self.app_event_tx.send(AppEvent::ConsolidateAgentMessage {
                     source,
                     cwd: self.config.cwd.to_path_buf(),
+                    metadata: history_cell::AssistantMessageMetadata::new(
+                        self.model_display_name().to_string(),
+                        self.active_assistant_turn_started_at
+                            .and_then(|started_at| {
+                                Local
+                                    .timestamp_opt(started_at, /*nsecs*/ 0)
+                                    .single()
+                                    .map(|started_at| started_at.format("%H:%M").to_string())
+                            }),
+                    ),
                 });
             }
         }
@@ -3147,7 +3141,7 @@ impl ChatWidget {
     fn on_task_complete(
         &mut self,
         last_agent_message: Option<String>,
-        duration_ms: Option<i64>,
+        _duration_ms: Option<i64>,
         from_replay: bool,
     ) {
         self.submit_pending_steers_after_interrupt = false;
@@ -3194,28 +3188,6 @@ impl ChatWidget {
         self.flush_unified_exec_wait_streak();
         if !from_replay {
             self.collect_runtime_metrics_delta();
-            let runtime_metrics =
-                (!self.turn_runtime_metrics.is_empty()).then_some(self.turn_runtime_metrics);
-            let show_work_separator = self.had_work_activity
-                && (self.needs_final_message_separator || runtime_metrics.is_some());
-            if show_work_separator || runtime_metrics.is_some() {
-                let elapsed_seconds = if show_work_separator {
-                    duration_ms
-                        .and_then(|duration_ms| u64::try_from(duration_ms).ok())
-                        .map(|duration_ms| duration_ms / 1_000)
-                        .or_else(|| {
-                            self.bottom_pane
-                                .status_widget()
-                                .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds)
-                        })
-                } else {
-                    None
-                };
-                self.add_to_history(history_cell::FinalMessageSeparator::new(
-                    elapsed_seconds,
-                    runtime_metrics,
-                ));
-            }
             self.turn_runtime_metrics = RuntimeMetricsSummary::default();
             self.needs_final_message_separator = false;
             self.had_work_activity = false;
@@ -3226,6 +3198,7 @@ impl ChatWidget {
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
         self.goal_status_active_turn_started_at = None;
+        self.active_assistant_turn_started_at = None;
         self.turn_sleep_inhibitor
             .set_turn_running(/*turn_running*/ false);
         self.update_task_running_state();
@@ -3886,6 +3859,7 @@ impl ChatWidget {
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
         self.goal_status_active_turn_started_at = None;
+        self.active_assistant_turn_started_at = None;
         self.turn_sleep_inhibitor
             .set_turn_running(/*turn_running*/ false);
         self.update_task_running_state();
@@ -4811,10 +4785,6 @@ impl ChatWidget {
             StatusDetailsCapitalization::Preserve,
             /*details_max_lines*/ 1,
         );
-        self.add_to_history(history_cell::new_patch_event(
-            event.changes,
-            &self.config.cwd,
-        ));
     }
 
     fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
@@ -5581,15 +5551,7 @@ impl ChatWidget {
         self.flush_active_cell();
 
         if self.stream_controller.is_none() {
-            // If the previous turn inserted non-stream history (exec output, patch status, MCP
-            // calls), render a separator before starting the next streamed assistant message.
-            if self.needs_final_message_separator && self.had_work_activity {
-                self.add_to_history(history_cell::FinalMessageSeparator::new(
-                    /*elapsed_seconds*/ None, /*runtime_metrics*/ None,
-                ));
-                self.needs_final_message_separator = false;
-            } else if self.needs_final_message_separator {
-                // Reset the flag even if we don't show separator (no work was done)
+            if self.needs_final_message_separator {
                 self.needs_final_message_separator = false;
             }
             self.stream_controller = Some(StreamController::new(
@@ -5732,9 +5694,10 @@ impl ChatWidget {
         // Mark that actual work was done (command executed)
         self.had_work_activity = true;
         if self.bottom_pane.is_task_running()
-            && !self.retain_current_live_tool_hint_if_fast(started_at) {
-                self.restore_status_after_tool_activity();
-            }
+            && !self.retain_current_live_tool_hint_if_fast(started_at)
+        {
+            self.restore_status_after_tool_activity();
+        }
         if is_user_shell {
             self.maybe_send_next_queued_input();
         }
@@ -6019,9 +5982,10 @@ impl ChatWidget {
         // Mark that actual work was done (MCP tool call)
         self.had_work_activity = true;
         if self.bottom_pane.is_task_running()
-            && !self.retain_current_live_tool_hint_if_fast(started_at) {
-                self.restore_status_after_tool_activity();
-            }
+            && !self.retain_current_live_tool_hint_if_fast(started_at)
+        {
+            self.restore_status_after_tool_activity();
+        }
     }
 
     pub(crate) fn new_with_app_event(common: ChatWidgetInit) -> Self {
@@ -6194,6 +6158,7 @@ impl ChatWidget {
             thread_id: None,
             dismissed_plan_mode_nudge_scopes: HashSet::new(),
             last_turn_id: None,
+            active_assistant_turn_started_at: None,
             budget_limited_turn_ids: HashSet::new(),
             thread_name: None,
             thread_rename_block_message: None,
@@ -6251,8 +6216,6 @@ impl ChatWidget {
             current_goal_status: None,
             goal_status_active_turn_started_at: None,
             terminal_unfocused_since: None,
-            away_snapshot: None,
-            last_away_summary_key: None,
             last_idle_context_nudge_key: None,
             instruction_size_warning_emitted: false,
             external_editor_state: ExternalEditorState::Closed,
@@ -7234,9 +7197,11 @@ impl ChatWidget {
             } = turn;
             if matches!(status, TurnStatus::InProgress) {
                 self.last_non_retry_error = None;
+                self.active_assistant_turn_started_at = started_at;
                 self.on_task_started();
             }
             for item in items {
+                self.active_assistant_turn_started_at = started_at;
                 self.replay_thread_item(item, turn_id.clone(), replay_kind);
             }
             if matches!(
@@ -7639,6 +7604,7 @@ impl ChatWidget {
             }
             ServerNotification::TurnStarted(notification) => {
                 self.last_turn_id = Some(notification.turn.id);
+                self.active_assistant_turn_started_at = notification.turn.started_at;
                 self.last_non_retry_error = None;
                 if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) {
                     self.on_task_started();
@@ -8275,8 +8241,10 @@ impl ChatWidget {
             EventMsg::TurnStarted(event) => {
                 self.cancel_delayed_completion_notification();
                 let turn_id = event.turn_id;
+                let started_at = event.started_at;
                 let model_context_window = event.model_context_window;
                 self.last_turn_id = Some(turn_id);
+                self.active_assistant_turn_started_at = started_at;
                 if !is_resume_initial_replay {
                     self.apply_turn_started_context_window(model_context_window);
                     self.on_task_started();

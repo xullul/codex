@@ -10,7 +10,6 @@
 //! bumps the active-cell revision tracked by `ChatWidget`, so the cache key changes whenever the
 //! rendered transcript output can change.
 
-use crate::diff_render::create_diff_summary;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::OutputLinesParams;
@@ -63,7 +62,6 @@ use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::SessionConfiguredEvent;
@@ -488,6 +486,27 @@ impl HistoryCell for AgentMessageCell {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AssistantMessageMetadata {
+    model: String,
+    time: Option<String>,
+}
+
+impl AssistantMessageMetadata {
+    pub(crate) fn new(model: String, time: Option<String>) -> Self {
+        Self { model, time }
+    }
+
+    fn transcript_line(&self) -> Line<'static> {
+        let mut text = format!("  assistant · {}", self.model);
+        if let Some(time) = self.time.as_deref().filter(|time| !time.is_empty()) {
+            text.push_str(" · ");
+            text.push_str(time);
+        }
+        text.dim().into()
+    }
+}
+
 /// A consolidated agent message cell that stores raw markdown source and re-renders from it.
 ///
 /// After a stream finalizes, the `ConsolidateAgentMessage` handler in `App`
@@ -502,6 +521,7 @@ impl HistoryCell for AgentMessageCell {
 pub(crate) struct AgentMarkdownCell {
     markdown_source: String,
     cwd: PathBuf,
+    metadata: Option<AssistantMessageMetadata>,
 }
 
 impl AgentMarkdownCell {
@@ -510,10 +530,24 @@ impl AgentMarkdownCell {
     /// `markdown_source` must be the raw source accumulated by the stream controller, not already
     /// wrapped terminal lines. Passing rendered lines here would make future resize reflow preserve
     /// stale wrapping instead of repairing it.
+    #[cfg(test)]
     pub(crate) fn new(markdown_source: String, cwd: &Path) -> Self {
         Self {
             markdown_source,
             cwd: cwd.to_path_buf(),
+            metadata: None,
+        }
+    }
+
+    pub(crate) fn new_with_metadata(
+        markdown_source: String,
+        cwd: &Path,
+        metadata: AssistantMessageMetadata,
+    ) -> Self {
+        Self {
+            markdown_source,
+            cwd: cwd.to_path_buf(),
+            metadata: Some(metadata),
         }
     }
 }
@@ -536,6 +570,15 @@ impl HistoryCell for AgentMarkdownCell {
             &mut lines,
         );
         prefix_lines(lines, "• ".dim(), "  ".into())
+    }
+
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        if let Some(metadata) = &self.metadata {
+            lines.push(metadata.transcript_line());
+        }
+        lines.extend(self.display_lines(width));
+        lines
     }
 }
 
@@ -1084,33 +1127,6 @@ pub fn new_guardian_timed_out_action_request(summary: String) -> Box<dyn History
 pub(crate) fn new_review_status_line(message: String) -> PlainHistoryCell {
     PlainHistoryCell {
         lines: vec![Line::from(message.cyan())],
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct PatchHistoryCell {
-    changes: HashMap<PathBuf, FileChange>,
-    cwd: PathBuf,
-}
-
-impl HistoryCell for PatchHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let file_count = self.changes.len();
-        let mut lines = vec![Line::from(vec![
-            "✓ ".green().bold(),
-            "Applied patch".bold(),
-            format!(
-                " · {file_count} {}",
-                if file_count == 1 { "file" } else { "files" }
-            )
-            .dim(),
-        ])];
-        lines.extend(create_diff_summary(
-            &self.changes,
-            &self.cwd,
-            width as usize,
-        ));
-        lines
     }
 }
 
@@ -2746,19 +2762,6 @@ impl HistoryCell for PlanUpdateCell {
     }
 }
 
-/// Create a new `PendingPatch` cell that lists the file‑level summary of
-/// a proposed patch. The summary lines should already be formatted (e.g.
-/// "A path/to/file.rs").
-pub(crate) fn new_patch_event(
-    changes: HashMap<PathBuf, FileChange>,
-    cwd: &Path,
-) -> PatchHistoryCell {
-    PatchHistoryCell {
-        changes,
-        cwd: cwd.to_path_buf(),
-    }
-}
-
 pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -2853,58 +2856,6 @@ pub(crate) fn new_reasoning_summary_block(
         &cwd,
         /*transcript_only*/ true,
     ))
-}
-
-#[derive(Debug)]
-/// A visual divider between turns, optionally showing how long the assistant "worked for".
-///
-/// This separator is only emitted for turns that performed concrete work (e.g., running commands,
-/// applying patches, making MCP tool calls), so purely conversational turns do not show an empty
-/// divider.
-pub struct FinalMessageSeparator {
-    elapsed_seconds: Option<u64>,
-    runtime_metrics: Option<RuntimeMetricsSummary>,
-}
-impl FinalMessageSeparator {
-    /// Creates a separator; completed turns should pass protocol turn duration when available.
-    pub(crate) fn new(
-        elapsed_seconds: Option<u64>,
-        runtime_metrics: Option<RuntimeMetricsSummary>,
-    ) -> Self {
-        Self {
-            elapsed_seconds,
-            runtime_metrics,
-        }
-    }
-}
-impl HistoryCell for FinalMessageSeparator {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut label_parts = Vec::new();
-        if let Some(elapsed_seconds) = self
-            .elapsed_seconds
-            .filter(|seconds| *seconds > 60)
-            .map(super::status_indicator_widget::fmt_elapsed_compact)
-        {
-            label_parts.push(format!("Worked for {elapsed_seconds}"));
-        }
-        if let Some(metrics_label) = self.runtime_metrics.and_then(runtime_metrics_label) {
-            label_parts.push(metrics_label);
-        }
-
-        if label_parts.is_empty() {
-            return vec![Line::from_iter(["─".repeat(width as usize).dim()])];
-        }
-
-        let label = format!("─ {} ─", label_parts.join(" • "));
-        let (label, _suffix, label_width) = take_prefix_by_width(&label, width as usize);
-        vec![
-            Line::from_iter([
-                label,
-                "─".repeat((width as usize).saturating_sub(label_width)),
-            ])
-            .dim(),
-        ]
-    }
 }
 
 pub(crate) fn runtime_metrics_label(summary: RuntimeMetricsSummary) -> Option<String> {
@@ -3036,8 +2987,6 @@ mod tests {
     use crate::wrapping::word_wrap_lines;
     use codex_config::types::McpServerConfig;
     use codex_config::types::McpServerDisabledReason;
-    use codex_otel::RuntimeMetricTotals;
-    use codex_otel::RuntimeMetricsSummary;
     use codex_protocol::ThreadId;
     use codex_protocol::account::PlanType;
     use codex_protocol::models::WebSearchAction;
@@ -3266,63 +3215,6 @@ mod tests {
         let cell = new_unified_exec_interaction(/*command_display*/ None, String::new());
         let lines = render_transcript(&cell);
         assert_eq!(lines, vec!["• Waited for background terminal"]);
-    }
-
-    #[test]
-    fn final_message_separator_hides_short_worked_label_and_includes_runtime_metrics() {
-        let summary = RuntimeMetricsSummary {
-            tool_calls: RuntimeMetricTotals {
-                count: 3,
-                duration_ms: 2_450,
-            },
-            api_calls: RuntimeMetricTotals {
-                count: 2,
-                duration_ms: 1_200,
-            },
-            streaming_events: RuntimeMetricTotals {
-                count: 6,
-                duration_ms: 900,
-            },
-            websocket_calls: RuntimeMetricTotals {
-                count: 1,
-                duration_ms: 700,
-            },
-            websocket_events: RuntimeMetricTotals {
-                count: 4,
-                duration_ms: 1_200,
-            },
-            responses_api_overhead_ms: 650,
-            responses_api_inference_time_ms: 1_940,
-            responses_api_engine_iapi_ttft_ms: 410,
-            responses_api_engine_service_ttft_ms: 460,
-            responses_api_engine_iapi_tbt_ms: 1_180,
-            responses_api_engine_service_tbt_ms: 1_240,
-            turn_ttft_ms: 0,
-            turn_ttfm_ms: 0,
-        };
-        let cell = FinalMessageSeparator::new(Some(12), Some(summary));
-        let rendered = render_lines(&cell.display_lines(/*width*/ 600));
-
-        assert_eq!(rendered.len(), 1);
-        assert!(!rendered[0].contains("Worked for"));
-        assert!(rendered[0].contains("Local tools: 3 calls (2.5s)"));
-        assert!(rendered[0].contains("Inference: 2 calls (1.2s)"));
-        assert!(rendered[0].contains("WebSocket: 1 events send (700ms)"));
-        assert!(rendered[0].contains("Streams: 6 events (900ms)"));
-        assert!(rendered[0].contains("4 events received (1.2s)"));
-        assert!(rendered[0].contains("Responses API overhead: 650ms"));
-        assert!(rendered[0].contains("Responses API inference: 1.9s"));
-        assert!(rendered[0].contains("TTFT: 410ms (iapi) 460ms (service)"));
-        assert!(rendered[0].contains("TBT: 1.2s (iapi) 1.2s (service)"));
-    }
-
-    #[test]
-    fn final_message_separator_includes_worked_label_after_one_minute() {
-        let cell = FinalMessageSeparator::new(Some(61), /*runtime_metrics*/ None);
-        let rendered = render_lines(&cell.display_lines(/*width*/ 200));
-
-        assert_eq!(rendered.len(), 1);
-        assert!(rendered[0].contains("Worked for"));
     }
 
     #[test]
@@ -5085,6 +4977,38 @@ mod tests {
         assert!(
             lines_32.len() > lines_80.len(),
             "narrower width should produce more wrapped lines: {lines_32:?}",
+        );
+    }
+
+    #[test]
+    fn agent_markdown_cell_metadata_is_transcript_only() {
+        let cell = AgentMarkdownCell::new_with_metadata(
+            "Final answer".to_string(),
+            &test_cwd(),
+            AssistantMessageMetadata::new("gpt-test".to_string(), Some("09:41".to_string())),
+        );
+
+        assert_eq!(
+            render_lines(&cell.display_lines(/*width*/ 80)),
+            vec!["• Final answer"]
+        );
+        assert_eq!(
+            render_lines(&cell.transcript_lines(/*width*/ 80)),
+            vec!["  assistant · gpt-test · 09:41", "• Final answer"]
+        );
+    }
+
+    #[test]
+    fn agent_markdown_cell_metadata_omits_missing_time() {
+        let cell = AgentMarkdownCell::new_with_metadata(
+            "Final answer".to_string(),
+            &test_cwd(),
+            AssistantMessageMetadata::new("gpt-test".to_string(), None),
+        );
+
+        assert_eq!(
+            render_lines(&cell.transcript_lines(/*width*/ 80)),
+            vec!["  assistant · gpt-test", "• Final answer"]
         );
     }
 
