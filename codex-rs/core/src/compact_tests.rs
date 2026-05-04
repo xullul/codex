@@ -24,6 +24,14 @@ async fn process_compacted_history_with_test_session(
 }
 
 #[test]
+fn summarization_prompt_preserves_active_skill_guidance() {
+    assert!(SUMMARIZATION_PROMPT.contains("Active `<skill>` guidance"));
+    assert!(SUMMARIZATION_PROMPT.contains("skill name"));
+    assert!(SUMMARIZATION_PROMPT.contains("path"));
+    assert!(SUMMARIZATION_PROMPT.contains("operational rules"));
+}
+
+#[test]
 fn content_items_to_text_joins_non_empty_segments() {
     let items = vec![
         ContentItem::InputText {
