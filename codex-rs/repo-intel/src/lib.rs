@@ -10,6 +10,8 @@ use serde::Serialize;
 
 const MAX_GIT_FILES: usize = 8_000;
 const MAX_WALK_FILES: usize = 5_000;
+const MAX_GIT_STATUS_LINES: usize = 20;
+const MAX_GIT_RECENT_COMMITS: usize = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoIntelRequest {
@@ -66,6 +68,28 @@ impl RepoIntelSnapshot {
             self.git.head.as_deref().unwrap_or("unknown"),
             self.git.dirty
         ));
+        if matches!(self.git.source, RepoIntelGitSource::Git) {
+            if self.git.status.is_empty() {
+                out.push_str("Git status: (clean)\n");
+            } else {
+                out.push_str("Git status:\n");
+                for entry in &self.git.status {
+                    out.push_str(&format!("- {entry}\n"));
+                }
+                if self.git.status_truncated {
+                    out.push_str("- ... (status truncated)\n");
+                }
+            }
+            if !self.git.recent_commits.is_empty() {
+                out.push_str("Recent commits:\n");
+                for commit in &self.git.recent_commits {
+                    out.push_str(&format!("- {commit}\n"));
+                }
+                if self.git.recent_commits_truncated {
+                    out.push_str("- ... (older commits omitted)\n");
+                }
+            }
+        }
         if !self.project_kinds.is_empty() {
             out.push_str(&format!(
                 "Project signals: {}\n",
@@ -191,6 +215,10 @@ pub struct RepoIntelGit {
     pub branch: Option<String>,
     pub head: Option<String>,
     pub dirty: bool,
+    pub status: Vec<String>,
+    pub status_truncated: bool,
+    pub recent_commits: Vec<String>,
+    pub recent_commits_truncated: bool,
     pub source: RepoIntelGitSource,
 }
 
@@ -422,12 +450,32 @@ fn collect_git(root: &Path) -> RepoIntelGit {
 
     let branch = git_stdout(root, &["branch", "--show-current"]);
     let head = git_stdout(root, &["rev-parse", "--short", "HEAD"]);
-    let dirty = git_stdout(root, &["status", "--porcelain", "-uno"])
-        .is_some_and(|status| !status.trim().is_empty());
+    let (status, status_truncated) = git_lines(
+        root,
+        &["--no-optional-locks", "status", "--short"],
+        MAX_GIT_STATUS_LINES,
+    );
+    let dirty = !status.is_empty();
+    let recent_commit_limit = (MAX_GIT_RECENT_COMMITS + 1).to_string();
+    let (recent_commits, recent_commits_truncated) = git_lines(
+        root,
+        &[
+            "--no-optional-locks",
+            "log",
+            "--oneline",
+            "-n",
+            &recent_commit_limit,
+        ],
+        MAX_GIT_RECENT_COMMITS,
+    );
     RepoIntelGit {
         branch,
         head,
         dirty,
+        status,
+        status_truncated,
+        recent_commits,
+        recent_commits_truncated,
         source: RepoIntelGitSource::Git,
     }
 }
@@ -453,6 +501,21 @@ fn git_stdout(root: &Path, args: &[&str]) -> Option<String> {
     }
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!text.is_empty()).then_some(text)
+}
+
+fn git_lines(root: &Path, args: &[&str], max_lines: usize) -> (Vec<String>, bool) {
+    let Some(stdout) = git_stdout(root, args) else {
+        return (Vec::new(), false);
+    };
+    let mut lines = stdout
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let truncated = lines.len() > max_lines;
+    lines.truncate(max_lines);
+    (lines, truncated)
 }
 
 fn collect_high_signal_files(
@@ -928,6 +991,103 @@ mod tests {
     }
 
     #[test]
+    fn git_snapshot_renders_clean_status_and_recent_commits() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(&tmp);
+        std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        run_git(tmp.path(), &["add", "Cargo.toml"]);
+        run_git(tmp.path(), &["commit", "-m", "initial commit"]);
+
+        let snapshot = collect_repo_intel(&RepoIntelRequest {
+            cwd: tmp.path().to_path_buf(),
+            user_prompt: "understand this repo".to_string(),
+            budget: RepoIntelBudget::default(),
+        })
+        .unwrap();
+
+        assert!(!snapshot.git.dirty);
+        assert_eq!(snapshot.git.status, Vec::<String>::new());
+        assert!(!snapshot.git.status_truncated);
+        assert!(
+            snapshot
+                .git
+                .recent_commits
+                .iter()
+                .any(|commit| commit.contains("initial commit"))
+        );
+
+        let rendered = snapshot.render_for_model();
+        assert!(rendered.contains("Git status: (clean)"));
+        assert!(rendered.contains("Recent commits:"));
+        assert!(rendered.contains("initial commit"));
+    }
+
+    #[test]
+    fn git_snapshot_includes_modified_and_untracked_status() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(&tmp);
+        std::fs::write(tmp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "# Demo\n").unwrap();
+        run_git(tmp.path(), &["add", "Cargo.toml", "README.md"]);
+        run_git(tmp.path(), &["commit", "-m", "tracked files"]);
+        std::fs::write(tmp.path().join("README.md"), "# Demo\n\nChanged.\n").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "untracked\n").unwrap();
+
+        let snapshot = collect_repo_intel(&RepoIntelRequest {
+            cwd: tmp.path().to_path_buf(),
+            user_prompt: "review this repo".to_string(),
+            budget: RepoIntelBudget::default(),
+        })
+        .unwrap();
+
+        assert!(snapshot.git.dirty);
+        assert!(
+            snapshot
+                .git
+                .status
+                .iter()
+                .any(|entry| entry.contains("README.md"))
+        );
+        assert!(
+            snapshot
+                .git
+                .status
+                .iter()
+                .any(|entry| entry == "?? notes.txt")
+        );
+
+        let rendered = snapshot.render_for_model();
+        assert!(rendered.contains("Git status:"));
+        assert!(rendered.contains("README.md"));
+        assert!(rendered.contains("?? notes.txt"));
+    }
+
+    #[test]
+    fn git_status_is_bounded() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(&tmp);
+        for index in 0..(MAX_GIT_STATUS_LINES + 3) {
+            std::fs::write(tmp.path().join(format!("untracked-{index}.txt")), "new\n").unwrap();
+        }
+
+        let snapshot = collect_repo_intel(&RepoIntelRequest {
+            cwd: tmp.path().to_path_buf(),
+            user_prompt: "review this repo".to_string(),
+            budget: RepoIntelBudget::default(),
+        })
+        .unwrap();
+
+        assert!(snapshot.git.dirty);
+        assert_eq!(snapshot.git.status.len(), MAX_GIT_STATUS_LINES);
+        assert!(snapshot.git.status_truncated);
+        assert!(
+            snapshot
+                .render_for_model()
+                .contains("- ... (status truncated)")
+        );
+    }
+
+    #[test]
     fn codebase_map_finds_roots_clusters_entrypoints_and_tests() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(
@@ -1069,5 +1229,26 @@ mod tests {
         .unwrap();
 
         assert_eq!(snapshot.prompt_paths, Vec::new());
+    }
+
+    fn init_git_repo(tmp: &TempDir) {
+        run_git(tmp.path(), &["init", "-q"]);
+        run_git(tmp.path(), &["config", "user.name", "Codex Test"]);
+        run_git(tmp.path(), &["config", "user.email", "codex@example.test"]);
+    }
+
+    fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run git {args:?}: {err}"));
+        assert!(
+            output.status.success(),
+            "git {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

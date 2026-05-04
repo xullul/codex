@@ -58,9 +58,6 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::plan_tool::PlanItemArg;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
@@ -2594,12 +2591,6 @@ fn split_request_user_input_answer(
     (options, note)
 }
 
-/// Render a user‑friendly plan update styled like a checkbox todo list.
-pub(crate) fn new_plan_update(update: UpdatePlanArgs) -> PlanUpdateCell {
-    let UpdatePlanArgs { explanation, plan } = update;
-    PlanUpdateCell { explanation, plan }
-}
-
 /// Create a proposed-plan cell that snapshots the session cwd for later markdown rendering.
 ///
 /// The plan body is stored as raw markdown so terminal resize reflow can render it again at the
@@ -2682,83 +2673,6 @@ impl HistoryCell for ProposedPlanStreamCell {
 
     fn is_stream_continuation(&self) -> bool {
         self.is_stream_continuation
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct PlanUpdateCell {
-    explanation: Option<String>,
-    plan: Vec<PlanItemArg>,
-}
-
-impl HistoryCell for PlanUpdateCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let render_note = |text: &str| -> Vec<Line<'static>> {
-            let wrap_width = width.max(1) as usize;
-            let note = Line::from(text.to_string().dim().italic());
-            let wrapped = adaptive_wrap_line(
-                &note,
-                RtOptions::new(wrap_width)
-                    .initial_indent("  └ ".dim().into())
-                    .subsequent_indent("    ".into()),
-            );
-            let mut out = Vec::new();
-            push_owned_lines(&wrapped, &mut out);
-            out
-        };
-
-        let render_step = |status: &StepStatus, text: &str| -> Vec<Line<'static>> {
-            let (initial_indent, subsequent_indent) = match status {
-                StepStatus::Completed => (Line::from("  ✓ ".dim()), Line::from("    ")),
-                StepStatus::InProgress => (Line::from("  › ".cyan().bold()), Line::from("    ")),
-                StepStatus::Pending => (Line::from("  - ".dim()), Line::from("    ")),
-            };
-
-            let opts = RtOptions::new(width as usize)
-                .initial_indent(initial_indent)
-                .subsequent_indent(subsequent_indent)
-                .break_words(/*break_words*/ true);
-            let step = match status {
-                StepStatus::Completed => Line::from(text.to_string().dim()),
-                StepStatus::InProgress => Line::from(text.to_string().cyan().bold()),
-                StepStatus::Pending => Line::from(text.to_string().dim()),
-            };
-            let wrapped = adaptive_wrap_line(&step, opts);
-            let mut out = Vec::new();
-            push_owned_lines(&wrapped, &mut out);
-            out
-        };
-
-        let completed = self
-            .plan
-            .iter()
-            .filter(|item| matches!(item.status, StepStatus::Completed))
-            .count();
-        let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
-            "• ".dim(),
-            "Plan".bold(),
-            format!(" {completed}/{} complete", self.plan.len()).dim(),
-            " · /work".dim(),
-        ])];
-
-        let note = self
-            .explanation
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|t| !t.is_empty());
-        if let Some(expl) = note {
-            lines.extend(render_note(expl));
-        };
-
-        if self.plan.is_empty() {
-            lines.push(Line::from("  (no steps provided)".dim().italic()));
-        } else {
-            for PlanItemArg { step, status } in self.plan.iter() {
-                lines.extend(render_step(status, step));
-            }
-        }
-
-        lines
     }
 }
 
@@ -4725,95 +4639,6 @@ mod tests {
         assert!(
             non_empty_rows > 3,
             "expected long URL to span multiple visible rows, got:\n{rendered_blob}"
-        );
-    }
-
-    #[test]
-    fn plan_update_with_note_and_wrapping_snapshot() {
-        // Long explanation forces wrapping; include long step text to verify step wrapping and alignment.
-        let update = UpdatePlanArgs {
-            explanation: Some(
-                "I’ll update Grafana call error handling by adding retries and clearer messages when the backend is unreachable."
-                    .to_string(),
-            ),
-            plan: vec![
-                PlanItemArg {
-                    step: "Investigate existing error paths and logging around HTTP timeouts".into(),
-                    status: StepStatus::Completed,
-                },
-                PlanItemArg {
-                    step: "Harden Grafana client error handling with retry/backoff and user‑friendly messages".into(),
-                    status: StepStatus::InProgress,
-                },
-                PlanItemArg {
-                    step: "Add tests for transient failure scenarios and surfacing to the UI".into(),
-                    status: StepStatus::Pending,
-                },
-            ],
-        };
-
-        let cell = new_plan_update(update);
-        // Narrow width to force wrapping for both the note and steps
-        let lines = cell.display_lines(/*width*/ 32);
-        let rendered = render_lines(&lines).join("\n");
-        insta::assert_snapshot!(rendered);
-    }
-
-    #[test]
-    fn plan_update_without_note_snapshot() {
-        let update = UpdatePlanArgs {
-            explanation: None,
-            plan: vec![
-                PlanItemArg {
-                    step: "Define error taxonomy".into(),
-                    status: StepStatus::InProgress,
-                },
-                PlanItemArg {
-                    step: "Implement mapping to user messages".into(),
-                    status: StepStatus::Pending,
-                },
-            ],
-        };
-
-        let cell = new_plan_update(update);
-        let lines = cell.display_lines(/*width*/ 40);
-        let rendered = render_lines(&lines).join("\n");
-        insta::assert_snapshot!(rendered);
-    }
-
-    #[test]
-    fn plan_update_does_not_split_url_like_tokens_in_note_or_step() {
-        let note_url =
-            "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890";
-        let step_url = "example.test/api/v1/projects/beta-team/releases/2026-02-17/builds/0987654321/artifacts/reports/performance";
-        let update = UpdatePlanArgs {
-            explanation: Some(format!(
-                "Investigate failures under {note_url} immediately."
-            )),
-            plan: vec![PlanItemArg {
-                step: format!("Validate callbacks under {step_url} before rollout."),
-                status: StepStatus::InProgress,
-            }],
-        };
-
-        let cell = new_plan_update(update);
-        let rendered = render_lines(&cell.display_lines(/*width*/ 30));
-
-        assert_eq!(
-            rendered
-                .iter()
-                .filter(|line| line.contains(note_url))
-                .count(),
-            1,
-            "expected full note URL-like token in one rendered line, got: {rendered:?}"
-        );
-        assert_eq!(
-            rendered
-                .iter()
-                .filter(|line| line.contains(step_url))
-                .count(),
-            1,
-            "expected full step URL-like token in one rendered line, got: {rendered:?}"
         );
     }
 

@@ -4312,9 +4312,9 @@ impl ChatWidget {
 
     fn on_plan_update(&mut self, update: UpdatePlanArgs) {
         self.saw_plan_update_this_turn = true;
-        let total = update.plan.len();
-        let completed = update
-            .plan
+        let UpdatePlanArgs { plan, .. } = update;
+        let total = plan.len();
+        let completed = plan
             .iter()
             .filter(|item| match &item.status {
                 StepStatus::Completed => true,
@@ -4322,17 +4322,14 @@ impl ChatWidget {
             })
             .count();
         self.last_plan_progress = (total > 0).then_some((completed, total));
-        self.latest_work_state_checklist =
-            update.plan.iter().map(WorkStatePlanItem::from).collect();
-        self.latest_plan_in_progress = update
-            .plan
+        self.latest_work_state_checklist = plan.iter().map(WorkStatePlanItem::from).collect();
+        self.latest_plan_in_progress = plan
             .iter()
             .position(|item| matches!(item.status, StepStatus::InProgress))
-            .map(|index| (index + 1, total, update.plan[index].step.clone()));
-        self.bottom_pane.set_plan_checklist(update.plan.clone());
+            .map(|index| (index + 1, total, plan[index].step.clone()));
+        self.bottom_pane.set_plan_checklist(plan);
         self.refresh_plan_status_if_idle();
         self.refresh_status_surfaces();
-        self.add_to_history(history_cell::new_plan_update(update));
     }
 
     fn refresh_plan_status_if_idle(&mut self) -> bool {
