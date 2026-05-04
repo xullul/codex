@@ -4368,7 +4368,7 @@ mod tests {
 
     #[test]
     fn stderr_tail_more_than_five_lines_snapshot() {
-        // Build an exec cell with a non-zero exit and 10 lines on stderr to exercise
+        // Build an exec cell with a non-zero exit and enough stderr lines to exercise
         // the head/tail rendering and gutter prefixes.
         let call_id = "c_err".to_string();
         let mut cell = ExecCell::new(
@@ -4384,10 +4384,14 @@ mod tests {
             },
             /*animations_enabled*/ true,
         );
-        let stderr: String = (1..=10)
-            .map(|n| n.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let stderr: String = [
+            "1".to_string(),
+            "... [2 bytes omitted from the middle of command output] ...".to_string(),
+        ]
+        .into_iter()
+        .chain((2..=10).map(|n| n.to_string()))
+        .collect::<Vec<_>>()
+        .join("\n");
         cell.complete_call(
             &call_id,
             CommandOutput {

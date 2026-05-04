@@ -227,6 +227,39 @@ fn head_tail_buffer_default_preserves_prefix_and_suffix() {
     assert!(rendered.ends_with(b"bc"));
 }
 
+#[tokio::test]
+async fn collect_output_until_deadline_marks_omitted_output() {
+    let output_buffer = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::new(
+        /*max_bytes*/ 10,
+    )));
+    {
+        let mut buffer = output_buffer.lock().await;
+        buffer.push_chunk(b"0123456789".to_vec());
+        buffer.push_chunk(b"ab".to_vec());
+    }
+    let output_notify = Arc::new(tokio::sync::Notify::new());
+    let output_closed = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let output_closed_notify = Arc::new(tokio::sync::Notify::new());
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
+    cancellation_token.cancel();
+
+    let collected = UnifiedExecProcessManager::collect_output_until_deadline(
+        &output_buffer,
+        &output_notify,
+        &output_closed,
+        &output_closed_notify,
+        &cancellation_token,
+        /*pause_state*/ None,
+        Instant::now() + Duration::from_millis(100),
+    )
+    .await;
+
+    assert_eq!(
+        String::from_utf8(collected).expect("valid utf-8"),
+        "01234... [2 bytes omitted from the middle of command output] ...789ab"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_exec_persists_across_requests() -> anyhow::Result<()> {
     skip_if_sandbox!(Ok(()));

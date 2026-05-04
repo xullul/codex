@@ -19,6 +19,26 @@ fn keeps_prefix_and_suffix_when_over_budget() {
 }
 
 #[test]
+fn marker_aware_bytes_match_raw_bytes_when_under_budget() {
+    let mut buf = HeadTailBuffer::new(/*max_bytes*/ 10);
+    buf.push_chunk(b"abc".to_vec());
+
+    assert_eq!(buf.to_bytes_with_omission_marker(), b"abc".to_vec());
+}
+
+#[test]
+fn marker_aware_bytes_insert_marker_between_head_and_tail_once() {
+    let mut buf = HeadTailBuffer::new(/*max_bytes*/ 10);
+    buf.push_chunk(b"0123456789".to_vec());
+    buf.push_chunk(b"ab".to_vec());
+
+    assert_eq!(
+        String::from_utf8(buf.to_bytes_with_omission_marker()).expect("valid utf-8"),
+        "01234... [2 bytes omitted from the middle of command output] ...789ab"
+    );
+}
+
+#[test]
 fn max_bytes_zero_drops_everything() {
     let mut buf = HeadTailBuffer::new(/*max_bytes*/ 0);
     buf.push_chunk(b"abc".to_vec());
@@ -27,6 +47,17 @@ fn max_bytes_zero_drops_everything() {
     assert_eq!(buf.omitted_bytes(), 3);
     assert_eq!(buf.to_bytes(), b"".to_vec());
     assert_eq!(buf.snapshot_chunks(), Vec::<Vec<u8>>::new());
+}
+
+#[test]
+fn marker_aware_bytes_for_zero_byte_cap_return_only_marker() {
+    let mut buf = HeadTailBuffer::new(/*max_bytes*/ 0);
+    buf.push_chunk(b"abc".to_vec());
+
+    assert_eq!(
+        String::from_utf8(buf.to_bytes_with_omission_marker()).expect("valid utf-8"),
+        "... [3 bytes omitted from the middle of command output] ..."
+    );
 }
 
 #[test]
@@ -51,6 +82,21 @@ fn draining_resets_state() {
     assert_eq!(buf.retained_bytes(), 0);
     assert_eq!(buf.omitted_bytes(), 0);
     assert_eq!(buf.to_bytes(), b"".to_vec());
+}
+
+#[test]
+fn marker_aware_drain_returns_marker_and_resets_state() {
+    let mut buf = HeadTailBuffer::new(/*max_bytes*/ 10);
+    buf.push_chunk(b"0123456789".to_vec());
+    buf.push_chunk(b"ab".to_vec());
+
+    assert_eq!(
+        String::from_utf8(buf.drain_bytes_with_omission_marker()).expect("valid utf-8"),
+        "01234... [2 bytes omitted from the middle of command output] ...789ab"
+    );
+    assert_eq!(buf.retained_bytes(), 0);
+    assert_eq!(buf.omitted_bytes(), 0);
+    assert_eq!(buf.to_bytes_with_omission_marker(), b"".to_vec());
 }
 
 #[test]

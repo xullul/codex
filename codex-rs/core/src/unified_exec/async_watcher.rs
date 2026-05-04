@@ -316,11 +316,11 @@ async fn resolve_aggregated_output(
     fallback: String,
 ) -> String {
     let guard = transcript.lock().await;
-    if guard.retained_bytes() == 0 {
+    if guard.retained_bytes() == 0 && guard.omitted_bytes() == 0 {
         return fallback;
     }
 
-    String::from_utf8_lossy(&guard.to_bytes()).to_string()
+    String::from_utf8_lossy(&guard.to_bytes_with_omission_marker()).to_string()
 }
 
 #[cfg(test)]

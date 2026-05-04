@@ -1,6 +1,9 @@
 use crate::unified_exec::UNIFIED_EXEC_OUTPUT_MAX_BYTES;
 use std::collections::VecDeque;
 
+const OMISSION_MARKER_PREFIX: &str = "... [";
+const OMISSION_MARKER_SUFFIX: &str = " bytes omitted from the middle of command output] ...";
+
 /// A capped buffer that preserves a stable prefix ("head") and suffix ("tail"),
 /// dropping the middle once it exceeds the configured maximum. The buffer is
 /// symmetric meaning 50% of the capacity is allocated to the head and 50% is
@@ -107,22 +110,63 @@ impl HeadTailBuffer {
     /// Omitted bytes are not represented in the returned value.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.retained_bytes());
+        self.extend_head_bytes(&mut out);
+        self.extend_tail_bytes(&mut out);
+        out
+    }
+
+    /// Return the retained output as bytes, adding a marker for omitted bytes.
+    ///
+    /// When middle bytes were dropped, the marker is inserted between the
+    /// retained head and tail. If no bytes were omitted, this matches
+    /// `to_bytes`.
+    pub(crate) fn to_bytes_with_omission_marker(&self) -> Vec<u8> {
+        if self.omitted_bytes == 0 {
+            return self.to_bytes();
+        }
+
+        let omitted_bytes = self.omitted_bytes;
+        let marker = format!("{OMISSION_MARKER_PREFIX}{omitted_bytes}{OMISSION_MARKER_SUFFIX}");
+        let mut out = Vec::with_capacity(self.retained_bytes().saturating_add(marker.len()));
+        self.extend_head_bytes(&mut out);
+        out.extend_from_slice(marker.as_bytes());
+        self.extend_tail_bytes(&mut out);
+        out
+    }
+
+    fn extend_head_bytes(&self, out: &mut Vec<u8>) {
         for chunk in self.head.iter() {
             out.extend_from_slice(chunk);
         }
+    }
+
+    fn extend_tail_bytes(&self, out: &mut Vec<u8>) {
         for chunk in self.tail.iter() {
             out.extend_from_slice(chunk);
         }
-        out
     }
 
     /// Drain all retained chunks from the buffer and reset its state.
     ///
     /// The drained chunks are returned in head-then-tail order. Omitted bytes
     /// are discarded along with the retained content.
+    #[allow(dead_code)]
     pub(crate) fn drain_chunks(&mut self) -> Vec<Vec<u8>> {
         let mut out: Vec<Vec<u8>> = self.head.drain(..).collect();
         out.extend(self.tail.drain(..));
+        self.head_bytes = 0;
+        self.tail_bytes = 0;
+        self.omitted_bytes = 0;
+        out
+    }
+
+    /// Drain retained output as bytes, adding a marker for omitted bytes.
+    ///
+    /// The buffer state is reset after the returned bytes are built.
+    pub(crate) fn drain_bytes_with_omission_marker(&mut self) -> Vec<u8> {
+        let out = self.to_bytes_with_omission_marker();
+        self.head.clear();
+        self.tail.clear();
         self.head_bytes = 0;
         self.tail_bytes = 0;
         self.omitted_bytes = 0;

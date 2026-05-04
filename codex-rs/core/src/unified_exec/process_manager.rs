@@ -1090,17 +1090,17 @@ impl UnifiedExecProcessManager {
                 &mut post_exit_deadline,
             )
             .await;
-            let drained_chunks: Vec<Vec<u8>>;
+            let drained_bytes: Vec<u8>;
             let mut wait_for_output = None;
             {
                 let mut guard = output_buffer.lock().await;
-                drained_chunks = guard.drain_chunks();
-                if drained_chunks.is_empty() {
+                drained_bytes = guard.drain_bytes_with_omission_marker();
+                if drained_bytes.is_empty() {
                     wait_for_output = Some(output_notify.notified());
                 }
             }
 
-            if drained_chunks.is_empty() {
+            if drained_bytes.is_empty() {
                 exit_signal_received |= cancellation_token.is_cancelled();
                 if exit_signal_received && output_closed.load(std::sync::atomic::Ordering::Acquire)
                 {
@@ -1145,9 +1145,7 @@ impl UnifiedExecProcessManager {
                 continue;
             }
 
-            for chunk in drained_chunks {
-                collected.extend_from_slice(&chunk);
-            }
+            collected.extend_from_slice(&drained_bytes);
 
             exit_signal_received |= cancellation_token.is_cancelled();
             if Instant::now() >= deadline {
