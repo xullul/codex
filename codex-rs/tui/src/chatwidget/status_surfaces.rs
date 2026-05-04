@@ -60,6 +60,20 @@ impl StatusSurfaceSelections {
                 .terminal_title_items
                 .contains(&TerminalTitleItem::GitBranch)
     }
+
+    fn uses_rate_limits(&self) -> bool {
+        self.status_line_items.iter().any(|item| {
+            matches!(
+                item,
+                StatusLineItem::FiveHourLimit | StatusLineItem::WeeklyLimit
+            )
+        }) || self.terminal_title_items.iter().any(|item| {
+            matches!(
+                item,
+                TerminalTitleItem::FiveHourLimit | TerminalTitleItem::WeeklyLimit
+            )
+        })
+    }
 }
 
 /// Cached project-root display name keyed by the cwd used for the last lookup.
@@ -382,6 +396,10 @@ impl ChatWidget {
                 .map(ToString::to_string)
                 .collect()
         })
+    }
+
+    pub(super) fn status_surfaces_need_rate_limits(&self) -> bool {
+        self.status_surface_selections().uses_rate_limits()
     }
 
     fn status_line_cwd(&self) -> &Path {

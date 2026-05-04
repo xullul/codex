@@ -600,7 +600,8 @@ impl App {
                         self.chat_widget.on_rate_limit_snapshot(Some(snapshot));
                     }
                     match origin {
-                        RateLimitRefreshOrigin::StartupPrefetch => {
+                        RateLimitRefreshOrigin::StartupPrefetch
+                        | RateLimitRefreshOrigin::StatusSurface => {
                             tui.frame_requester().schedule_frame();
                         }
                         RateLimitRefreshOrigin::StatusCommand { request_id } => {

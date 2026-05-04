@@ -101,11 +101,14 @@ pub(crate) struct ConnectorsSnapshot {
 /// only updates the cached snapshots (no status card to finalize). A
 /// `StatusCommand` is tied to a specific `/status` invocation and must call
 /// `finish_status_rate_limit_refresh` when done so the card stops showing a
-/// "refreshing" state.
+/// "refreshing" state. `StatusSurface` is a passive refresh for status-line
+/// and terminal-title rate-limit items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RateLimitRefreshOrigin {
     /// Eagerly fetched after bootstrap so the first `/status` already has data.
     StartupPrefetch,
+    /// Periodic refresh while status surfaces display rate-limit values.
+    StatusSurface,
     /// User-initiated via `/status`; the `request_id` correlates with the
     /// status card that should be updated when the fetch completes.
     StatusCommand { request_id: u64 },

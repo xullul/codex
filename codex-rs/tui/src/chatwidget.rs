@@ -43,6 +43,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
+use tokio::task::JoinHandle;
 
 use self::realtime::PendingSteerCompareKey;
 use crate::app::app_server_requests::ResolvedAppServerRequest;
@@ -472,6 +473,7 @@ const USER_SHELL_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it l
 const USER_SHELL_COMMAND_HELP_HINT: &str = "Example: !ls";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_STATUS_LINE_ITEMS: [&str; 2] = ["model-with-reasoning", "current-dir"];
+const RATE_LIMIT_STATUS_SURFACE_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const MIN_READABLE_LIVE_TOOL_HINT: Duration = Duration::from_millis(700);
 // Track information about an in-flight exec command.
 struct RunningCommand {
@@ -974,6 +976,7 @@ pub(crate) struct ChatWidget {
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     rate_limit_warnings: RateLimitWarningState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
+    rate_limit_poller: Option<JoinHandle<()>>,
     add_credits_nudge_email_in_flight: Option<AddCreditsNudgeCreditType>,
     adaptive_chunking: AdaptiveChunkingPolicy,
     // Stream lifecycle controller
@@ -2570,6 +2573,7 @@ impl ChatWidget {
         tracing::info!("status line setup confirmed with items: {items:#?}");
         let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
         self.config.tui_status_line = Some(ids);
+        self.prefetch_rate_limits();
         self.refresh_status_line();
     }
 
@@ -2610,6 +2614,7 @@ impl ChatWidget {
         let ids = items.iter().map(ToString::to_string).collect::<Vec<_>>();
         self.terminal_title_setup_original_items = None;
         self.config.tui_terminal_title = Some(ids);
+        self.prefetch_rate_limits();
         self.refresh_terminal_title();
     }
 
@@ -3864,6 +3869,7 @@ impl ChatWidget {
             self.codex_rate_limit_reached_type = None;
         }
         self.refresh_status_line();
+        self.request_redraw();
     }
     /// Finalize any active exec as failed and stop/clear agent-turn UI state.
     ///
@@ -6118,6 +6124,7 @@ impl ChatWidget {
             codex_rate_limit_reached_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
+            rate_limit_poller: None,
             add_credits_nudge_email_in_flight: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
@@ -9162,7 +9169,11 @@ impl ChatWidget {
         );
     }
 
-    fn stop_rate_limit_poller(&mut self) {}
+    fn stop_rate_limit_poller(&mut self) {
+        if let Some(handle) = self.rate_limit_poller.take() {
+            handle.abort();
+        }
+    }
 
     pub(crate) fn refresh_connectors(&mut self, force_refetch: bool) {
         self.prefetch_connectors_with_options(force_refetch);
@@ -9247,6 +9258,21 @@ impl ChatWidget {
     #[cfg_attr(not(test), allow(dead_code))]
     fn prefetch_rate_limits(&mut self) {
         self.stop_rate_limit_poller();
+        if !self.should_prefetch_rate_limits() || !self.status_surfaces_need_rate_limits() {
+            return;
+        }
+
+        let app_event_tx = self.app_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(RATE_LIMIT_STATUS_SURFACE_REFRESH_INTERVAL);
+            loop {
+                interval.tick().await;
+                app_event_tx.send(AppEvent::RefreshRateLimits {
+                    origin: RateLimitRefreshOrigin::StatusSurface,
+                });
+            }
+        });
+        self.rate_limit_poller = Some(handle);
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -11377,6 +11403,7 @@ impl ChatWidget {
         self.has_chatgpt_account = has_chatgpt_account;
         self.bottom_pane
             .set_connectors_enabled(self.connectors_enabled());
+        self.prefetch_rate_limits();
     }
 
     pub(crate) fn should_show_fast_status(

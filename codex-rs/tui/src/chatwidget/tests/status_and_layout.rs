@@ -277,6 +277,54 @@ async fn prefetch_rate_limits_is_gated_on_chatgpt_auth_provider() {
 }
 
 #[tokio::test]
+async fn rate_limit_status_surface_items_start_passive_refresh() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    set_chatgpt_auth(&mut chat);
+
+    assert!(chat.rate_limit_poller.is_none());
+    chat.setup_status_line(vec![StatusLineItem::WeeklyLimit]);
+    assert!(chat.rate_limit_poller.is_some());
+
+    chat.setup_status_line(vec![StatusLineItem::ModelName]);
+    assert!(chat.rate_limit_poller.is_none());
+
+    chat.setup_terminal_title(vec![TerminalTitleItem::FiveHourLimit]);
+    assert!(chat.rate_limit_poller.is_some());
+}
+
+#[tokio::test]
+async fn rate_limit_status_surface_items_do_not_poll_without_chatgpt_auth() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.setup_status_line(vec![StatusLineItem::WeeklyLimit]);
+    assert!(chat.rate_limit_poller.is_none());
+}
+
+#[tokio::test]
+async fn weekly_status_line_updates_from_rate_limit_snapshots() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_status_line = Some(vec!["weekly-limit".to_string()]);
+
+    let mut limits = snapshot(/*percent*/ 0.0);
+    limits.secondary = Some(RateLimitWindow {
+        used_percent: 64.0,
+        window_minutes: Some(10_080),
+        resets_at: None,
+    });
+    chat.on_rate_limit_snapshot(Some(limits));
+    assert_eq!(status_line_text(&chat), Some("weekly 36%".to_string()));
+
+    let mut updated_limits = snapshot(/*percent*/ 0.0);
+    updated_limits.secondary = Some(RateLimitWindow {
+        used_percent: 82.0,
+        window_minutes: Some(10_080),
+        resets_at: None,
+    });
+    chat.on_rate_limit_snapshot(Some(updated_limits));
+    assert_eq!(status_line_text(&chat), Some("weekly 18%".to_string()));
+}
+
+#[tokio::test]
 async fn rate_limit_warnings_emit_thresholds() {
     let mut state = RateLimitWarningState::default();
     let mut warnings: Vec<String> = Vec::new();
