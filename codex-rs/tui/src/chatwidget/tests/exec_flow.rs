@@ -435,6 +435,73 @@ async fn exec_history_cell_shows_working_then_failed() {
 }
 
 #[tokio::test]
+async fn active_exec_cell_is_finalized_after_error() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    begin_exec(&mut chat, "call-error", "sleep 5");
+    assert!(drain_insert_history(&mut rx).is_empty());
+
+    chat.handle_codex_event(Event {
+        id: "error-1".into(),
+        msg: EventMsg::Error(ErrorEvent {
+            message: "stream failed while waiting for tool result".to_string(),
+            codex_error_info: None,
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 2, "expected exec cell plus error event");
+    assert!(chat.active_cell.is_none());
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("");
+    assert_chatwidget_snapshot!("active_exec_cell_is_finalized_after_error", rendered);
+}
+
+#[tokio::test]
+async fn active_exec_cell_is_finalized_after_budget_abort() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    begin_exec(&mut chat, "call-budget", "cargo test");
+    assert!(drain_insert_history(&mut rx).is_empty());
+
+    chat.handle_codex_event(Event {
+        id: "turn-budget".into(),
+        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+            turn_id: Some("turn-1".to_string()),
+            reason: TurnAbortReason::BudgetLimited,
+            completed_at: None,
+            duration_ms: None,
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 2, "expected exec cell plus budget notice");
+    assert!(chat.active_cell.is_none());
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("");
+    assert_chatwidget_snapshot!("active_exec_cell_is_finalized_after_budget_abort", rendered);
+}
+
+#[test]
+fn tool_failure_reason_is_concise() {
+    assert_eq!(
+        concise_tool_failure_reason("  stream\nfailed\twhile waiting  "),
+        Some("stream failed while waiting".to_string())
+    );
+
+    let long = "a".repeat(260);
+    let reason = concise_tool_failure_reason(&long).expect("reason");
+    assert_eq!(reason.chars().count(), 243);
+    assert!(reason.ends_with("..."));
+}
+
+#[tokio::test]
 async fn exec_end_without_begin_uses_event_command() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let command = vec![

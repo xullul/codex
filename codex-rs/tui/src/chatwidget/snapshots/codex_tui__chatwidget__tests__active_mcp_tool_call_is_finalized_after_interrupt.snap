@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/mcp_startup.rs
+expression: rendered
+---
+• Used github.search({"query":"status row"})
+  └ Error: Conversation interrupted.
+
+■ Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.

@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/exec_flow.rs
+expression: rendered
+---
+• Waited sleep 5
+  └ stream failed while waiting for tool result
+
+■ stream failed while waiting for tool result

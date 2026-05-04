@@ -265,6 +265,7 @@ use tracing::debug;
 use tracing::warn;
 
 const DEFAULT_MODEL_DISPLAY_NAME: &str = "loading";
+const TOOL_FAILURE_REASON_MAX_CHARS: usize = 240;
 const MULTI_AGENT_ENABLE_TITLE: &str = "Enable subagents?";
 const MULTI_AGENT_ENABLE_YES: &str = "Yes, enable";
 const MULTI_AGENT_ENABLE_NO: &str = "Not now";
@@ -280,6 +281,22 @@ const PLAN_MODE_REASONING_SCOPE_PLAN_ONLY: &str = "Apply to Plan mode override";
 const PLAN_MODE_REASONING_SCOPE_ALL_MODES: &str = "Apply to global default and Plan mode override";
 const CONNECTORS_SELECTION_VIEW_ID: &str = "connectors-selection";
 const TUI_STUB_MESSAGE: &str = "Not available in TUI yet.";
+
+fn concise_tool_failure_reason(reason: &str) -> Option<String> {
+    let compact = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.is_empty() {
+        return None;
+    }
+
+    let mut truncated = compact
+        .chars()
+        .take(TOOL_FAILURE_REASON_MAX_CHARS)
+        .collect::<String>();
+    if compact.chars().count() > TOOL_FAILURE_REASON_MAX_CHARS {
+        truncated.push_str("...");
+    }
+    Some(truncated)
+}
 
 /// Choose the keybinding used to edit the most-recently queued message.
 ///
@@ -3852,9 +3869,10 @@ impl ChatWidget {
     ///
     /// This does not clear MCP startup tracking, because MCP startup can overlap with turn cleanup
     /// and should continue to drive the bottom-pane running indicator while it is in progress.
-    fn finalize_turn(&mut self) {
+    fn finalize_turn(&mut self, tool_failure_reason: Option<&str>) {
+        let tool_failure_reason = tool_failure_reason.and_then(concise_tool_failure_reason);
         // Ensure any spinner is replaced by a red ✗ and flushed into history.
-        self.finalize_active_cell_as_failed();
+        self.finalize_active_cell_as_failed(tool_failure_reason.as_deref());
         // Reset running state and clear streaming buffers.
         self.user_turn_pending_start = false;
         self.agent_turn_running = false;
@@ -3878,13 +3896,12 @@ impl ChatWidget {
 
     fn on_server_overloaded_error(&mut self, message: String) {
         self.submit_pending_steers_after_interrupt = false;
-        self.finalize_turn();
-
         let message = if message.trim().is_empty() {
             "Codex is currently experiencing high load.".to_string()
         } else {
             message
         };
+        self.finalize_turn(Some(&message));
 
         self.add_to_history(history_cell::new_warning_event(message));
         self.request_redraw();
@@ -3893,7 +3910,7 @@ impl ChatWidget {
 
     fn on_error(&mut self, message: String) {
         self.submit_pending_steers_after_interrupt = false;
-        self.finalize_turn();
+        self.finalize_turn(Some(&message));
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
 
@@ -3903,7 +3920,9 @@ impl ChatWidget {
 
     fn on_cyber_policy_error(&mut self) {
         self.submit_pending_steers_after_interrupt = false;
-        self.finalize_turn();
+        self.finalize_turn(Some(
+            "This chat was flagged for possible cybersecurity risk",
+        ));
         self.add_to_history(history_cell::new_cyber_policy_error_event());
         self.request_redraw();
 
@@ -4020,7 +4039,13 @@ impl ChatWidget {
     /// separated by newlines rather than auto‑submitting the next one.
     fn on_interrupted_turn(&mut self, reason: TurnAbortReason) {
         // Finalize, log a gentle prompt, and clear running state.
-        self.finalize_turn();
+        let tool_failure_reason = match reason {
+            TurnAbortReason::Interrupted => "Conversation interrupted.",
+            TurnAbortReason::Replaced => "Turn aborted: replaced by a new task.",
+            TurnAbortReason::ReviewEnded => "Review ended.",
+            TurnAbortReason::BudgetLimited => "Goal budget reached - the turn was stopped.",
+        };
+        self.finalize_turn(Some(tool_failure_reason));
         let send_pending_steers_immediately = self.submit_pending_steers_after_interrupt;
         self.submit_pending_steers_after_interrupt = false;
         if reason != TurnAbortReason::ReviewEnded
@@ -7921,7 +7946,7 @@ impl ChatWidget {
                     }
                 } else {
                     self.last_non_retry_error = None;
-                    self.finalize_turn();
+                    self.finalize_turn(Some("Turn failed."));
                     self.request_redraw();
                     self.maybe_send_next_queued_input();
                 }
@@ -8686,13 +8711,13 @@ impl ChatWidget {
     }
 
     /// Mark the active cell as failed (✗) and flush it into history.
-    fn finalize_active_cell_as_failed(&mut self) {
+    fn finalize_active_cell_as_failed(&mut self, tool_failure_reason: Option<&str>) {
         if let Some(mut cell) = self.active_cell.take() {
             // Insert finalized cell into history and keep grouping consistent.
             if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
-                exec.mark_failed();
+                exec.mark_failed(tool_failure_reason);
             } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
-                tool.mark_failed();
+                tool.mark_failed(tool_failure_reason);
             }
             self.add_boxed_history(cell);
         }

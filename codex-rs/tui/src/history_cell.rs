@@ -1631,10 +1631,10 @@ impl McpToolCallCell {
         }
     }
 
-    pub(crate) fn mark_failed(&mut self) {
+    pub(crate) fn mark_failed(&mut self, reason: Option<&str>) {
         let elapsed = self.start_time.elapsed();
         self.duration = Some(elapsed);
-        self.result = Some(Err("interrupted".to_string()));
+        self.result = Some(Err(reason.unwrap_or("interrupted").to_string()));
     }
 
     fn render_content_block(block: &serde_json::Value, width: usize) -> String {

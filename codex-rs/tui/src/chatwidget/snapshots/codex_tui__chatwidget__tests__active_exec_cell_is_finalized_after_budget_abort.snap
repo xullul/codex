@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/exec_flow.rs
+expression: rendered
+---
+• Tested cargo test
+  └ Goal budget reached - the turn was stopped.
+
+■ Goal budget reached - the turn was stopped.

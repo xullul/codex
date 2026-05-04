@@ -130,6 +130,85 @@ async fn mcp_tool_call_end_keeps_fast_status_readable() {
 }
 
 #[tokio::test]
+async fn active_mcp_tool_call_is_finalized_after_error() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_codex_event(Event {
+        id: "mcp-call-error".into(),
+        msg: EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            call_id: "mcp-call-error".to_string(),
+            invocation: McpInvocation {
+                server: "github".to_string(),
+                tool: "search".to_string(),
+                arguments: Some(json!({"query":"status row"})),
+            },
+            mcp_app_resource_uri: None,
+        }),
+    });
+    assert!(drain_insert_history(&mut rx).is_empty());
+
+    chat.handle_codex_event(Event {
+        id: "error-1".into(),
+        msg: EventMsg::Error(ErrorEvent {
+            message: "stream failed while waiting for MCP result".to_string(),
+            codex_error_info: None,
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 2, "expected MCP cell plus error event");
+    assert!(chat.active_cell.is_none());
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("");
+    assert_chatwidget_snapshot!("active_mcp_tool_call_is_finalized_after_error", rendered);
+}
+
+#[tokio::test]
+async fn active_mcp_tool_call_is_finalized_after_interrupt() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.handle_codex_event(Event {
+        id: "mcp-call-interrupt".into(),
+        msg: EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            call_id: "mcp-call-interrupt".to_string(),
+            invocation: McpInvocation {
+                server: "github".to_string(),
+                tool: "search".to_string(),
+                arguments: Some(json!({"query":"status row"})),
+            },
+            mcp_app_resource_uri: None,
+        }),
+    });
+    assert!(drain_insert_history(&mut rx).is_empty());
+
+    chat.handle_codex_event(Event {
+        id: "turn-interrupt".into(),
+        msg: EventMsg::TurnAborted(codex_protocol::protocol::TurnAbortedEvent {
+            turn_id: Some("turn-1".to_string()),
+            reason: TurnAbortReason::Interrupted,
+            completed_at: None,
+            duration_ms: None,
+        }),
+    });
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 2, "expected MCP cell plus interrupt notice");
+    assert!(chat.active_cell.is_none());
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("");
+    assert_chatwidget_snapshot!(
+        "active_mcp_tool_call_is_finalized_after_interrupt",
+        rendered
+    );
+}
+
+#[tokio::test]
 async fn mcp_tool_call_begin_replaces_retained_fast_status() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

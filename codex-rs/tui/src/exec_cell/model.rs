@@ -99,7 +99,7 @@ impl ExecCell {
         !self.is_exploring_cell() && self.calls.iter().all(|c| c.output.is_some())
     }
 
-    pub(crate) fn mark_failed(&mut self) {
+    pub(crate) fn mark_failed(&mut self, reason: Option<&str>) {
         for call in self.calls.iter_mut() {
             if call.output.is_none() {
                 let elapsed = call
@@ -108,10 +108,11 @@ impl ExecCell {
                     .unwrap_or_else(|| Duration::from_millis(0));
                 call.start_time = None;
                 call.duration = Some(elapsed);
+                let failure_output = reason.unwrap_or_default().to_string();
                 call.output = Some(CommandOutput {
                     exit_code: 1,
-                    formatted_output: String::new(),
-                    aggregated_output: String::new(),
+                    formatted_output: failure_output.clone(),
+                    aggregated_output: failure_output,
                 });
             }
         }

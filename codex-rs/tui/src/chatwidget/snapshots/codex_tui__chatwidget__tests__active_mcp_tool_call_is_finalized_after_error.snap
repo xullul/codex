@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/mcp_startup.rs
+expression: rendered
+---
+• Used github.search({"query":"status row"})
+  └ Error: stream failed while waiting for MCP result
+
+■ stream failed while waiting for MCP result
