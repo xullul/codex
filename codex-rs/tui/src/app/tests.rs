@@ -38,6 +38,7 @@ use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::FileChangeRequestApprovalParams;
 use codex_app_server_protocol::FileUpdateChange;
+use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerStartupState;
@@ -3052,6 +3053,200 @@ async fn inactive_thread_file_change_approval_recovers_buffered_changes() {
 }
 
 #[tokio::test]
+async fn inactive_subagent_file_change_mirrors_summary_to_primary_thread() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let main_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000101").expect("valid thread");
+    let agent_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000202").expect("valid thread");
+
+    app.enqueue_primary_thread_session(
+        test_thread_session(main_thread_id, test_path_buf("/tmp/main")),
+        Vec::new(),
+    )
+    .await?;
+    while app_event_rx.try_recv().is_ok() {}
+    app.agent_navigation.upsert(
+        agent_thread_id,
+        Some("Robie".to_string()),
+        Some("worker".to_string()),
+        /*is_closed*/ false,
+    );
+
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        file_change_completed_notification(agent_thread_id, "turn-1", "patch-1", "src/lib.rs"),
+    )
+    .await?;
+
+    let event = app
+        .active_thread_rx
+        .as_mut()
+        .expect("active primary receiver")
+        .try_recv()
+        .expect("primary synthetic file-change summary");
+    app.handle_thread_event_now(event);
+
+    let mut cell = None;
+    while let Ok(event) = app_event_rx.try_recv() {
+        if let AppEvent::InsertHistoryCell(history_cell) = event {
+            cell = Some(history_cell);
+            break;
+        }
+    }
+    let cell = cell.expect("expected subagent patch summary history cell");
+    let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+    assert!(rendered.contains("Robie [worker] edited files"));
+    assert!(rendered.contains("Added src/lib.rs"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn subagent_file_change_summary_replays_from_primary_thread_snapshot() -> Result<()> {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let main_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000101").expect("valid thread");
+    let agent_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000202").expect("valid thread");
+
+    app.enqueue_primary_thread_session(
+        test_thread_session(main_thread_id, test_path_buf("/tmp/main")),
+        Vec::new(),
+    )
+    .await?;
+    app.agent_navigation.upsert(
+        agent_thread_id,
+        Some("Robie".to_string()),
+        Some("worker".to_string()),
+        /*is_closed*/ false,
+    );
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        file_change_completed_notification(agent_thread_id, "turn-1", "patch-1", "src/lib.rs"),
+    )
+    .await?;
+
+    let snapshot = {
+        let channel = app
+            .thread_event_channels
+            .get(&main_thread_id)
+            .expect("primary thread channel");
+        let store = channel.store.lock().await;
+        store.snapshot()
+    };
+    while app_event_rx.try_recv().is_ok() {}
+
+    app.replay_thread_snapshot(snapshot, /*resume_restored_queue*/ false);
+
+    let mut replayed = String::new();
+    while let Ok(event) = app_event_rx.try_recv() {
+        if let AppEvent::InsertHistoryCell(cell) = event {
+            replayed.push_str(&lines_to_single_string(&cell.display_lines(/*width*/ 80)));
+        }
+    }
+    assert!(replayed.contains("Robie [worker] edited files"));
+    assert!(replayed.contains("Added src/lib.rs"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn side_thread_file_change_does_not_mirror_to_primary_thread() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let main_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000101").expect("valid thread");
+    let side_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000202").expect("valid thread");
+
+    app.enqueue_primary_thread_session(
+        test_thread_session(main_thread_id, test_path_buf("/tmp/main")),
+        Vec::new(),
+    )
+    .await?;
+    app.side_threads
+        .insert(side_thread_id, SideThreadState::new(main_thread_id));
+
+    app.enqueue_thread_notification(
+        side_thread_id,
+        file_change_completed_notification(side_thread_id, "turn-1", "patch-1", "src/lib.rs"),
+    )
+    .await?;
+
+    let snapshot = {
+        let channel = app
+            .thread_event_channels
+            .get(&main_thread_id)
+            .expect("primary thread channel");
+        let store = channel.store.lock().await;
+        store.snapshot()
+    };
+    assert!(
+        !snapshot
+            .events
+            .iter()
+            .any(|event| matches!(event, ThreadBufferedEvent::SubagentFileChangeSummary(_))),
+        "side-thread file changes should not mirror into the primary transcript"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn subagent_activity_persists_until_primary_turn_completes() -> Result<()> {
+    let mut app = make_test_app().await;
+    let main_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000101").expect("valid thread");
+    let agent_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000202").expect("valid thread");
+
+    app.primary_thread_id = Some(main_thread_id);
+    app.active_thread_id = Some(main_thread_id);
+    app.agent_navigation.upsert(
+        main_thread_id,
+        /*agent_nickname*/ None,
+        /*agent_role*/ None,
+        /*is_closed*/ false,
+    );
+    app.agent_navigation.upsert(
+        agent_thread_id,
+        Some("Robie".to_string()),
+        Some("worker".to_string()),
+        /*is_closed*/ false,
+    );
+
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        file_change_completed_notification(agent_thread_id, "turn-1", "patch-1", "src/lib.rs"),
+    )
+    .await?;
+    assert_eq!(
+        app.background_agent_activity_label(),
+        Some("Agents: Robie [worker] editing files".to_string())
+    );
+
+    app.enqueue_thread_notification(
+        agent_thread_id,
+        turn_completed_notification(agent_thread_id, "turn-1", TurnStatus::Completed),
+    )
+    .await?;
+    assert_eq!(
+        app.background_agent_activity_label(),
+        Some("Agents: Robie [worker] finished".to_string())
+    );
+
+    app.enqueue_thread_notification(
+        main_thread_id,
+        turn_completed_notification(main_thread_id, "turn-main", TurnStatus::Completed),
+    )
+    .await?;
+    assert_eq!(app.background_agent_activity_label(), None);
+    assert!(app.background_agent_activity.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn inactive_thread_permissions_approval_preserves_file_system_permissions() {
     let app = make_test_app().await;
     let thread_id = ThreadId::new();
@@ -4237,6 +4432,7 @@ async fn make_test_app() -> App {
         last_subagent_backfill_attempt: None,
         primary_session_configured: None,
         pending_primary_events: VecDeque::new(),
+        background_agent_activity: BackgroundAgentActivityState::default(),
         pending_app_server_requests: PendingAppServerRequests::default(),
         pending_plugin_enabled_writes: HashMap::new(),
     }
@@ -4298,6 +4494,7 @@ async fn make_test_app_with_channels() -> (
             last_subagent_backfill_attempt: None,
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
+            background_agent_activity: BackgroundAgentActivityState::default(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
         },
@@ -4503,6 +4700,27 @@ fn turn_completed_notification(
             completed_at: Some(0),
             duration_ms: Some(1),
             ..test_turn(turn_id, status, Vec::new())
+        },
+    })
+}
+
+fn file_change_completed_notification(
+    thread_id: ThreadId,
+    turn_id: &str,
+    item_id: &str,
+    path: &str,
+) -> ServerNotification {
+    ServerNotification::ItemCompleted(ItemCompletedNotification {
+        thread_id: thread_id.to_string(),
+        turn_id: turn_id.to_string(),
+        item: ThreadItem::FileChange {
+            id: item_id.to_string(),
+            changes: vec![FileUpdateChange {
+                path: path.to_string(),
+                kind: PatchChangeKind::Add,
+                diff: "hello\n".to_string(),
+            }],
+            status: codex_app_server_protocol::PatchApplyStatus::Completed,
         },
     })
 }

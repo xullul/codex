@@ -859,9 +859,18 @@ fn slice_line_spans<'a>(
         let seg_start = start_byte.max(s);
         let seg_end = end_byte.min(e);
         if seg_end > seg_start {
-            let local_start = seg_start - s;
-            let local_end = seg_end - s;
             let content = original.spans[i].content.as_ref();
+            let mut local_start = (seg_start - s).min(content.len());
+            while local_start < content.len() && !content.is_char_boundary(local_start) {
+                local_start += 1;
+            }
+            let mut local_end = (seg_end - s).min(content.len());
+            while local_end > 0 && !content.is_char_boundary(local_end) {
+                local_end -= 1;
+            }
+            if local_end <= local_start {
+                continue;
+            }
             let slice = &content[local_start..local_end];
             acc.push(Span {
                 style: *style,
@@ -1034,6 +1043,49 @@ mod tests {
         assert_eq!(out[1].spans[0].style.fg, Some(Color::Red));
         assert_eq!(concat_line(&out[0]), "ab");
         assert_eq!(concat_line(&out[1]), "cd");
+    }
+
+    #[test]
+    fn styled_unicode_wrap_does_not_slice_inside_codepoint() {
+        let line = Line::from(vec![
+            "I’ll ".dim(),
+            "build ".into(),
+            "asset-resolution".cyan(),
+            " changes".into(),
+        ]);
+
+        let wrapped = word_wrap_line(&line, /*width_or_options*/ 9);
+        let rendered = wrapped.iter().map(concat_line).join("\n");
+
+        assert!(rendered.contains("I’ll"));
+        assert!(rendered.contains("asset-"));
+    }
+
+    #[test]
+    fn adaptive_styled_unicode_wrap_does_not_slice_inside_codepoint() {
+        let line = Line::from(vec![
+            "see ".into(),
+            "https://example.test/path".cyan().underlined(),
+            " then I’ll continue".dim(),
+        ]);
+
+        let wrapped = adaptive_wrap_line(&line, RtOptions::new(/*width*/ 14));
+        let rendered = wrapped.iter().map(concat_line).join("\n");
+
+        assert!(rendered.contains("https://example.test/path"));
+        assert!(rendered.contains("I’ll"));
+    }
+
+    #[test]
+    fn slice_line_spans_clamps_invalid_utf8_boundaries() {
+        let line = Line::from(vec!["éx".red()]);
+        let span_bounds = vec![(0..3, line.spans[0].style)];
+
+        let mid_char_end = slice_line_spans(&line, &span_bounds, &(0..1));
+        let mid_char_start = slice_line_spans(&line, &span_bounds, &(1..3));
+
+        assert_eq!(concat_line(&mid_char_end), "");
+        assert_eq!(concat_line(&mid_char_start), "x");
     }
 
     #[test]

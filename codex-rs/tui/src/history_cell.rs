@@ -10,6 +10,7 @@
 //! bumps the active-cell revision tracked by `ChatWidget`, so the cache key changes whenever the
 //! rendered transcript output can change.
 
+use crate::diff_render::create_diff_summary;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::OutputLinesParams;
@@ -59,6 +60,7 @@ use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
 use codex_protocol::protocol::SessionConfiguredEvent;
@@ -1124,6 +1126,37 @@ pub fn new_guardian_timed_out_action_request(summary: String) -> Box<dyn History
 pub(crate) fn new_review_status_line(message: String) -> PlainHistoryCell {
     PlainHistoryCell {
         lines: vec![Line::from(message.cyan())],
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PatchHistoryCell {
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: PathBuf,
+}
+
+impl HistoryCell for PatchHistoryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        create_diff_summary(&self.changes, &self.cwd, width as usize)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SubagentPatchHistoryCell {
+    agent_label: String,
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: PathBuf,
+}
+
+impl HistoryCell for SubagentPatchHistoryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::from(vec![
+            self.agent_label.clone().cyan().bold(),
+            " edited files".dim(),
+        ])];
+        let diff_lines = create_diff_summary(&self.changes, &self.cwd, width as usize);
+        lines.extend(prefix_lines(diff_lines, "  ".into(), "  ".into()));
+        lines
     }
 }
 
@@ -2673,6 +2706,29 @@ impl HistoryCell for ProposedPlanStreamCell {
 
     fn is_stream_continuation(&self) -> bool {
         self.is_stream_continuation
+    }
+}
+
+/// Create a history cell that lists the file-level summary of a patch.
+pub(crate) fn new_patch_event(
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: &Path,
+) -> PatchHistoryCell {
+    PatchHistoryCell {
+        changes,
+        cwd: cwd.to_path_buf(),
+    }
+}
+
+pub(crate) fn new_subagent_patch_event(
+    agent_label: String,
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: &Path,
+) -> SubagentPatchHistoryCell {
+    SubagentPatchHistoryCell {
+        agent_label,
+        changes,
+        cwd: cwd.to_path_buf(),
     }
 }
 

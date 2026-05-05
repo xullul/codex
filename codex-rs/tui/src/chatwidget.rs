@@ -1093,6 +1093,7 @@ pub(crate) struct ChatWidget {
     /// hidden for that thread instead of resurfacing it on every matching draft.
     dismissed_plan_mode_nudge_scopes: HashSet<PlanModeNudgeScope>,
     last_turn_id: Option<String>,
+    rendered_file_change_summaries: HashSet<(String, String)>,
     active_assistant_turn_started_at: Option<i64>,
     budget_limited_turn_ids: HashSet<String>,
     thread_name: Option<String>,
@@ -4807,12 +4808,38 @@ impl ChatWidget {
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
         self.add_file_change_work_progress("editing files", &event.changes);
+        if !event.changes.is_empty()
+            && self
+                .rendered_file_change_summaries
+                .insert((event.turn_id.clone(), event.call_id.clone()))
+        {
+            self.add_to_history(history_cell::new_patch_event(
+                event.changes.clone(),
+                &self.config.cwd,
+            ));
+        }
         self.set_status(
             "Working".to_string(),
             Some("editing files".to_string()),
             StatusDetailsCapitalization::Preserve,
             /*details_max_lines*/ 1,
         );
+    }
+
+    pub(crate) fn on_subagent_file_change_summary(
+        &mut self,
+        agent_label: String,
+        changes: Vec<codex_app_server_protocol::FileUpdateChange>,
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        self.add_to_history(history_cell::new_subagent_patch_event(
+            agent_label,
+            file_update_changes_to_core(changes),
+            &self.config.cwd,
+        ));
+        self.request_redraw();
     }
 
     fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
@@ -5736,6 +5763,16 @@ impl ChatWidget {
         event: codex_protocol::protocol::PatchApplyEndEvent,
     ) {
         self.add_file_change_work_progress("edited files", &event.changes);
+        if !event.changes.is_empty()
+            && self
+                .rendered_file_change_summaries
+                .insert((event.turn_id.clone(), event.call_id.clone()))
+        {
+            self.add_to_history(history_cell::new_patch_event(
+                event.changes.clone(),
+                &self.config.cwd,
+            ));
+        }
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if !event.success {
@@ -6187,6 +6224,7 @@ impl ChatWidget {
             thread_id: None,
             dismissed_plan_mode_nudge_scopes: HashSet::new(),
             last_turn_id: None,
+            rendered_file_change_summaries: HashSet::new(),
             active_assistant_turn_started_at: None,
             budget_limited_turn_ids: HashSet::new(),
             thread_name: None,
