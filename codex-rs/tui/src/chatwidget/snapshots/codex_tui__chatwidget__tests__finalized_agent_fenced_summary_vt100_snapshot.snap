@@ -1,0 +1,55 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+expression: screen
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+• Your local branches in /C:/Users/Keenu/KeenuProjects/codex/codex are:
+
+  ```text
+  backup/pre-upstream-main-merge-20260424185750  83eaf12d  Improve parsed
+command action display
+  backup/pre-v0.128-main-merge-20260501          29312b71  Clear completed
+subagent activity
+  * main                                         077ff07b  fix(tui): restore
+file edit visibility
+  ```
+
+  Current branch: main.
+
+  Remote branch summary: origin has 2 refs, upstream has 2851 refs.
+
+  Changed:
+
+  ```toml
+  [features]
+  multi_agent_v2 = false
+  multi_agent = false
+  ```
+
+  to:
+
+  ```toml
+  [features]
+  multi_agent = false
+  ```

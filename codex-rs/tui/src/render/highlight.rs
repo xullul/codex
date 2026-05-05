@@ -1046,6 +1046,32 @@ mod tests {
     }
 
     #[test]
+    fn ansi_family_plain_summary_blocks_do_not_use_black_foreground() {
+        for theme_name in ["ansi", "base16", "base16-256"] {
+            let theme = resolve_theme_by_name(theme_name, /*codex_home*/ None)
+                .unwrap_or_else(|| panic!("expected built-in theme {theme_name} to resolve"));
+            for (lang, code) in [
+                (
+                    "text",
+                    "backup/pre-v0.128-main-merge-20260501          29312b71  Clear completed subagent activity\n",
+                ),
+                ("toml", "[features]\nmulti_agent_v2 = false\n"),
+            ] {
+                let Some(lines) = highlight_to_line_spans_with_theme(code, lang, &theme) else {
+                    continue;
+                };
+                for span in lines.into_iter().flatten() {
+                    assert_ne!(
+                        span.style.fg,
+                        Some(RtColor::Black),
+                        "{theme_name} {lang} span rendered black-on-dark-risk text: {span:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn highlight_multiline_python() {
         let code = "def hello():\n    print(\"hi\")\n    return 42";
         let lines = highlight_code_to_lines(code, "python");

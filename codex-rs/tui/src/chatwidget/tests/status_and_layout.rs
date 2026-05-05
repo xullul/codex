@@ -3117,6 +3117,52 @@ printf 'fenced within fenced\n'
 }
 
 #[tokio::test]
+async fn finalized_agent_fenced_summary_vt100_snapshot() {
+    let source = r#"Your local branches in [codex](/C:/Users/Keenu/KeenuProjects/codex/codex) are:
+
+```text
+backup/pre-upstream-main-merge-20260424185750  83eaf12d  Improve parsed command action display
+backup/pre-v0.128-main-merge-20260501          29312b71  Clear completed subagent activity
+* main                                         077ff07b  fix(tui): restore file edit visibility
+```
+
+Current branch: `main`.
+
+Remote branch summary: `origin` has 2 refs, `upstream` has 2851 refs.
+
+Changed:
+
+```toml
+[features]
+multi_agent_v2 = false
+multi_agent = false
+```
+
+to:
+
+```toml
+[features]
+multi_agent = false
+```
+"#;
+    let width: u16 = 80;
+    let height: u16 = 52;
+    let backend = VT100Backend::new(width, height);
+    let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+    term.set_viewport_area(Rect::new(0, height - 1, width, 1));
+    let cwd = test_path_buf("/tmp/project").abs();
+    let cell = crate::history_cell::AgentMarkdownCell::new(source.to_string(), cwd.as_path());
+    let lines = cell.display_lines(width);
+    crate::insert_history::insert_history_lines(&mut term, lines)
+        .expect("Failed to insert history lines in test");
+
+    let screen = normalize_snapshot_paths(term.backend().vt100().screen().contents());
+    assert!(screen.contains("backup/pre-v0.128-main-merge-20260501"));
+    assert!(screen.contains("multi_agent_v2 = false"));
+    assert_chatwidget_snapshot!("finalized_agent_fenced_summary_vt100_snapshot", screen);
+}
+
+#[tokio::test]
 async fn chatwidget_tall() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
