@@ -1111,6 +1111,25 @@ impl HistoryCell for PatchHistoryCell {
 }
 
 #[derive(Debug)]
+pub(crate) struct SubagentPatchHistoryCell {
+    agent_label: String,
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: PathBuf,
+}
+
+impl HistoryCell for SubagentPatchHistoryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::from(vec![
+            self.agent_label.clone().cyan().bold(),
+            " edited files".dim(),
+        ])];
+        let diff_lines = create_diff_summary(&self.changes, &self.cwd, width as usize);
+        lines.extend(prefix_lines(diff_lines, "  ".into(), "  ".into()));
+        lines
+    }
+}
+
+#[derive(Debug)]
 struct CompletedMcpToolCallWithImageOutput {
     _image: DynamicImage,
 }
@@ -2808,6 +2827,18 @@ pub(crate) fn new_patch_event(
     cwd: &Path,
 ) -> PatchHistoryCell {
     PatchHistoryCell {
+        changes,
+        cwd: cwd.to_path_buf(),
+    }
+}
+
+pub(crate) fn new_subagent_patch_event(
+    agent_label: String,
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: &Path,
+) -> SubagentPatchHistoryCell {
+    SubagentPatchHistoryCell {
+        agent_label,
         changes,
         cwd: cwd.to_path_buf(),
     }

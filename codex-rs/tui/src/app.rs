@@ -185,6 +185,7 @@ mod agent_navigation;
 mod app_server_event_targets;
 mod app_server_events;
 pub(crate) mod app_server_requests;
+mod background_agent_activity;
 mod background_requests;
 mod config_persistence;
 mod event_dispatch;
@@ -206,6 +207,7 @@ mod thread_session_state;
 use self::agent_navigation::AgentNavigationDirection;
 use self::agent_navigation::AgentNavigationState;
 use self::app_server_requests::PendingAppServerRequests;
+use self::background_agent_activity::BackgroundAgentActivityState;
 use self::loaded_threads::find_loaded_subagent_threads_for_primary;
 use self::pending_interactive_replay::PendingInteractiveReplayState;
 use self::platform_actions::*;
@@ -502,6 +504,7 @@ pub(crate) struct App {
     last_subagent_backfill_attempt: Option<ThreadId>,
     primary_session_configured: Option<ThreadSessionState>,
     pending_primary_events: VecDeque<ThreadBufferedEvent>,
+    background_agent_activity: BackgroundAgentActivityState,
     pending_app_server_requests: PendingAppServerRequests,
     // Serialize plugin enablement writes per plugin so stale completions cannot
     // overwrite a newer toggle, even if the plugin is toggled from different
@@ -906,6 +909,7 @@ See the Codex keymap documentation for supported actions and examples."
             last_subagent_backfill_attempt: None,
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
+            background_agent_activity: BackgroundAgentActivityState::default(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),

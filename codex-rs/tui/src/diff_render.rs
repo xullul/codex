@@ -457,7 +457,12 @@ fn render_changes_block(rows: Vec<Row>, wrap_cols: usize, cwd: &Path) -> Vec<RtL
         let lang_path = r.move_path.as_deref().unwrap_or(&r.path);
         let lang = detect_lang_for_path(lang_path);
         let mut lines = vec![];
-        render_change(&r.change, &mut lines, wrap_cols - 4, lang.as_deref());
+        render_change(
+            &r.change,
+            &mut lines,
+            wrap_cols.saturating_sub(4).max(1),
+            lang.as_deref(),
+        );
         out.extend(prefix_lines(lines, "    ".into(), "    ".into()));
     }
 

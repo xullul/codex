@@ -185,8 +185,45 @@ impl App {
         let label = self
             .agent_navigation
             .active_agent_label(self.current_displayed_thread_id(), self.primary_thread_id);
+        let label = match (label, self.background_agent_activity_label()) {
+            (Some(label), Some(activity)) => Some(format!("{label} · {activity}")),
+            (Some(label), None) => Some(label),
+            (None, Some(activity)) => Some(activity),
+            (None, None) => None,
+        };
         self.chat_widget.set_active_agent_label(label);
         self.sync_side_thread_ui();
+    }
+
+    pub(super) fn background_agent_activity_label(&self) -> Option<String> {
+        if self.active_side_parent_thread_id().is_some()
+            || self.background_agent_activity.is_empty()
+        {
+            return None;
+        }
+
+        let mut entries: Vec<_> = self
+            .background_agent_activity
+            .iter()
+            .filter(|(thread_id, _)| {
+                self.primary_thread_id != Some(**thread_id)
+                    && self.current_displayed_thread_id() != Some(**thread_id)
+                    && !self.side_threads.contains_key(thread_id)
+            })
+            .collect();
+        entries.sort_by_key(|(thread_id, _)| thread_id.to_string());
+        let (first_thread_id, first_activity) = entries.first().copied()?;
+        let first = format!(
+            "{} {}",
+            self.thread_label(*first_thread_id),
+            first_activity.label()
+        );
+        let remaining = entries.len().saturating_sub(1);
+        if remaining == 0 {
+            Some(format!("Agents: {first}"))
+        } else {
+            Some(format!("Agents: {first}; {remaining} running"))
+        }
     }
 
     pub(super) async fn thread_cwd(&self, thread_id: ThreadId) -> Option<AbsolutePathBuf> {
@@ -816,6 +853,8 @@ impl App {
             (guard.active, guard.side_parent_pending_status())
         };
         let notification_status_change = SideParentStatusChange::for_notification(&notification);
+        self.note_background_agent_notification(thread_id, &notification)
+            .await?;
 
         if should_send {
             match sender.try_send(ThreadBufferedEvent::Notification(notification)) {
@@ -838,6 +877,42 @@ impl App {
             self.apply_side_parent_status_change(thread_id, change);
         }
         self.refresh_pending_thread_approvals().await;
+        self.sync_active_agent_label();
+        Ok(())
+    }
+
+    async fn note_background_agent_notification(
+        &mut self,
+        thread_id: ThreadId,
+        notification: &ServerNotification,
+    ) -> Result<()> {
+        if self.primary_thread_id == Some(thread_id) {
+            if matches!(notification, ServerNotification::TurnCompleted(_)) {
+                self.background_agent_activity.clear();
+            }
+            return Ok(());
+        }
+        if self.side_threads.contains_key(&thread_id) {
+            return Ok(());
+        }
+
+        self.background_agent_activity
+            .note_notification(thread_id, notification);
+
+        if self.active_thread_id != Some(thread_id)
+            && let Some(changes) = self
+                .background_agent_activity
+                .file_change_summary_to_mirror(thread_id, notification)
+        {
+            self.enqueue_primary_thread_buffered_event(
+                ThreadBufferedEvent::SubagentFileChangeSummary(SubagentFileChangeSummary {
+                    agent_label: self.thread_label(thread_id),
+                    changes,
+                }),
+            )
+            .await?;
+        }
+
         Ok(())
     }
 
@@ -1077,6 +1152,10 @@ impl App {
                 ThreadBufferedEvent::FeedbackSubmission(event) => {
                     self.enqueue_thread_feedback_event(thread_id, event).await;
                 }
+                ThreadBufferedEvent::SubagentFileChangeSummary(summary) => {
+                    self.enqueue_thread_subagent_file_change_summary(thread_id, summary)
+                        .await;
+                }
             }
         }
         self.chat_widget
@@ -1109,6 +1188,80 @@ impl App {
         self.pending_primary_events
             .push_back(ThreadBufferedEvent::Request(request));
         Ok(())
+    }
+
+    async fn enqueue_thread_subagent_file_change_summary(
+        &mut self,
+        thread_id: ThreadId,
+        summary: SubagentFileChangeSummary,
+    ) {
+        let (sender, store) = {
+            let channel = self.ensure_thread_channel(thread_id);
+            (channel.sender.clone(), Arc::clone(&channel.store))
+        };
+
+        let should_send = {
+            let mut guard = store.lock().await;
+            guard
+                .buffer
+                .push_back(ThreadBufferedEvent::SubagentFileChangeSummary(
+                    summary.clone(),
+                ));
+            guard.active
+        };
+
+        if should_send {
+            match sender.try_send(ThreadBufferedEvent::SubagentFileChangeSummary(summary)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(event)) => {
+                    tokio::spawn(async move {
+                        if let Err(err) = sender.send(event).await {
+                            tracing::warn!("thread {thread_id} event channel closed: {err}");
+                        }
+                    });
+                }
+                Err(TrySendError::Closed(_)) => {
+                    tracing::warn!("thread {thread_id} event channel closed");
+                }
+            }
+        }
+    }
+
+    async fn enqueue_primary_thread_buffered_event(
+        &mut self,
+        event: ThreadBufferedEvent,
+    ) -> Result<()> {
+        let Some(thread_id) = self.primary_thread_id else {
+            self.pending_primary_events.push_back(event);
+            return Ok(());
+        };
+        match event {
+            ThreadBufferedEvent::SubagentFileChangeSummary(summary) => {
+                self.enqueue_thread_subagent_file_change_summary(thread_id, summary)
+                    .await;
+                Ok(())
+            }
+            ThreadBufferedEvent::Notification(notification) => {
+                self.pending_primary_events
+                    .push_back(ThreadBufferedEvent::Notification(notification));
+                Ok(())
+            }
+            ThreadBufferedEvent::Request(request) => {
+                self.pending_primary_events
+                    .push_back(ThreadBufferedEvent::Request(request));
+                Ok(())
+            }
+            ThreadBufferedEvent::HistoryEntryResponse(event) => {
+                self.pending_primary_events
+                    .push_back(ThreadBufferedEvent::HistoryEntryResponse(event));
+                Ok(())
+            }
+            ThreadBufferedEvent::FeedbackSubmission(event) => {
+                self.pending_primary_events
+                    .push_back(ThreadBufferedEvent::FeedbackSubmission(event));
+                Ok(())
+            }
+        }
     }
 
     pub(super) async fn refresh_snapshot_session_if_needed(
@@ -1383,6 +1536,10 @@ impl App {
             ThreadBufferedEvent::FeedbackSubmission(event) => {
                 self.handle_feedback_thread_event(event);
             }
+            ThreadBufferedEvent::SubagentFileChangeSummary(summary) => {
+                self.chat_widget
+                    .on_subagent_file_change_summary(summary.agent_label, summary.changes);
+            }
         }
         if needs_refresh {
             self.refresh_status_line();
@@ -1402,6 +1559,10 @@ impl App {
             }
             ThreadBufferedEvent::FeedbackSubmission(event) => {
                 self.handle_feedback_thread_event(event);
+            }
+            ThreadBufferedEvent::SubagentFileChangeSummary(summary) => {
+                self.chat_widget
+                    .on_subagent_file_change_summary(summary.agent_label, summary.changes);
             }
         }
     }

@@ -21,6 +21,13 @@ pub(super) enum ThreadBufferedEvent {
     Request(ServerRequest),
     HistoryEntryResponse(HistoryLookupResponse),
     FeedbackSubmission(FeedbackThreadEvent),
+    SubagentFileChangeSummary(SubagentFileChangeSummary),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct SubagentFileChangeSummary {
+    pub(super) agent_label: String,
+    pub(super) changes: Vec<codex_app_server_protocol::FileUpdateChange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,7 +159,8 @@ impl ThreadEventStore {
                 ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
-                | ThreadBufferedEvent::FeedbackSubmission(_) => None,
+                | ThreadBufferedEvent::FeedbackSubmission(_)
+                | ThreadBufferedEvent::SubagentFileChangeSummary(_) => None,
             })
             .collect()
     }
@@ -179,7 +187,8 @@ impl ThreadEventStore {
                 ThreadBufferedEvent::Request(_)
                 | ThreadBufferedEvent::Notification(_)
                 | ThreadBufferedEvent::HistoryEntryResponse(_)
-                | ThreadBufferedEvent::FeedbackSubmission(_) => None,
+                | ThreadBufferedEvent::FeedbackSubmission(_)
+                | ThreadBufferedEvent::SubagentFileChangeSummary(_) => None,
             })
             .or_else(|| {
                 self.turns
@@ -213,7 +222,8 @@ impl ThreadEventStore {
                         .should_replay_snapshot_request(request),
                     ThreadBufferedEvent::Notification(_)
                     | ThreadBufferedEvent::HistoryEntryResponse(_)
-                    | ThreadBufferedEvent::FeedbackSubmission(_) => true,
+                    | ThreadBufferedEvent::FeedbackSubmission(_)
+                    | ThreadBufferedEvent::SubagentFileChangeSummary(_) => true,
                 })
                 .cloned()
                 .collect(),

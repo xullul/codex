@@ -814,6 +814,7 @@ pub(crate) struct ChatWidget {
     collab_agent_metadata: HashMap<ThreadId, AgentMetadata>,
     pending_collab_spawn_requests: HashMap<String, multi_agents::SpawnRequestSummary>,
     suppressed_exec_calls: HashSet<String>,
+    rendered_file_change_summaries: HashSet<(String, String)>,
     skills_all: Vec<ProtocolSkillMetadata>,
     skills_initial_state: Option<HashMap<AbsolutePathBuf, bool>>,
     last_unified_wait: Option<UnifiedExecWaitState>,
@@ -3787,8 +3788,36 @@ impl ChatWidget {
         }
     }
 
-    fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
+    fn on_patch_apply_begin(
+        &mut self,
+        turn_id: String,
+        item_id: String,
+        changes: HashMap<PathBuf, FileChange>,
+    ) {
+        if changes.is_empty()
+            || !self
+                .rendered_file_change_summaries
+                .insert((turn_id, item_id))
+        {
+            return;
+        }
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
+    }
+
+    pub(crate) fn on_subagent_file_change_summary(
+        &mut self,
+        agent_label: String,
+        changes: Vec<codex_app_server_protocol::FileUpdateChange>,
+    ) {
+        if changes.is_empty() {
+            return;
+        }
+        self.add_to_history(history_cell::new_subagent_patch_event(
+            agent_label,
+            file_update_changes_to_display(changes),
+            &self.config.cwd,
+        ));
+        self.request_redraw();
     }
 
     fn on_view_image_tool_call(&mut self, path: AbsolutePathBuf) {
@@ -3819,11 +3848,12 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_file_change_completed(&mut self, item: ThreadItem) {
+    fn on_file_change_completed(&mut self, turn_id: String, item: ThreadItem) {
         let item2 = item.clone();
+        let turn_id2 = turn_id;
         self.defer_or_handle(
             |q| q.push_item_completed(item),
-            |s| s.handle_file_change_completed_now(item2),
+            |s| s.handle_file_change_completed_now(turn_id2, item2),
         );
     }
 
@@ -4485,10 +4515,21 @@ impl ChatWidget {
         }
     }
 
-    pub(crate) fn handle_file_change_completed_now(&mut self, item: ThreadItem) {
-        let ThreadItem::FileChange { status, .. } = item else {
+    pub(crate) fn handle_file_change_completed_now(&mut self, turn_id: String, item: ThreadItem) {
+        let ThreadItem::FileChange {
+            id,
+            changes,
+            status,
+        } = item
+        else {
             return;
         };
+        if !changes.is_empty() && self.rendered_file_change_summaries.insert((turn_id, id)) {
+            self.add_to_history(history_cell::new_patch_event(
+                file_update_changes_to_display(changes),
+                &self.config.cwd,
+            ));
+        }
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if matches!(status, codex_app_server_protocol::PatchApplyStatus::Failed) {
@@ -4793,7 +4834,10 @@ impl ChatWidget {
             item @ ThreadItem::CommandExecution { .. } => {
                 self.handle_command_execution_completed_now(item);
             }
-            item @ ThreadItem::FileChange { .. } => self.handle_file_change_completed_now(item),
+            item @ ThreadItem::FileChange { .. } => self.handle_file_change_completed_now(
+                self.last_turn_id.clone().unwrap_or_default(),
+                item,
+            ),
             item @ ThreadItem::McpToolCall { .. } => self.handle_mcp_tool_call_completed_now(item),
             _ => {}
         }
@@ -4920,6 +4964,7 @@ impl ChatWidget {
             collab_agent_metadata: HashMap::new(),
             pending_collab_spawn_requests: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
+            rendered_file_change_summaries: HashSet::new(),
             last_unified_wait: None,
             unified_exec_wait_streak: None,
             turn_sleep_inhibitor: SleepInhibitor::new(prevent_idle_sleep),
@@ -6070,7 +6115,9 @@ impl ChatWidget {
                 status: codex_app_server_protocol::PatchApplyStatus::InProgress,
                 ..
             } => {}
-            item @ ThreadItem::FileChange { .. } => self.on_file_change_completed(item),
+            item @ ThreadItem::FileChange { .. } => {
+                self.on_file_change_completed(turn_id.clone(), item)
+            }
             item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_completed(item),
             ThreadItem::WebSearch { id, query, action } => {
                 self.on_web_search_begin(id.clone());
@@ -6467,8 +6514,12 @@ impl ChatWidget {
     ) {
         match notification.item {
             item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_started(item),
-            ThreadItem::FileChange { id: _, changes, .. } => {
-                self.on_patch_apply_begin(file_update_changes_to_display(changes));
+            ThreadItem::FileChange { id, changes, .. } => {
+                self.on_patch_apply_begin(
+                    notification.turn_id,
+                    id,
+                    file_update_changes_to_display(changes),
+                );
             }
             item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
             ThreadItem::WebSearch { id, .. } => {

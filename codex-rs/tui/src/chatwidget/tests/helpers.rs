@@ -227,6 +227,7 @@ pub(super) async fn make_chatwidget_manual(
         collab_agent_metadata: HashMap::new(),
         pending_collab_spawn_requests: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),
+        rendered_file_change_summaries: HashSet::new(),
         skills_all: Vec::new(),
         skills_initial_state: None,
         last_unified_wait: None,
